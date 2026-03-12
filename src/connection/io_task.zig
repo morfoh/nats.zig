@@ -240,8 +240,7 @@ inline fn pollForData(
         .events = posix.POLL.IN,
         .revents = 0,
     }};
-    const ready = pollSockets(&fds, timeout_ms)
-        catch return .no_data;
+    const ready = pollSockets(&fds, timeout_ms) catch return .no_data;
     if (ready == 0) return .no_data;
 
     // Single load, combined checks (avoid 3 separate loads)
