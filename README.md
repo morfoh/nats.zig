@@ -1659,6 +1659,17 @@ zig build fmt
 | Key-Value | Planned |
 | Object Store | Planned |
 
+## Related Projects
+
+Other Zig-based NATS implementations from the community:
+
+- [NATS C client library, packaged for Zig](https://github.com/allyourcodebase/nats.c)
+- [Zig language bindings to the NATS.c library](https://github.com/epicyclic-dev/nats-client)
+- [Zig client for NATS Core and JetStream](https://github.com/g41797/nats)
+- [A Zig client library for NATS, the cloud-native messaging system](https://github.com/lalinsky/nats.zig)
+- [Minimal synchronous NATS Zig client](https://github.com/ianic/nats.zig)
+- [Work-in-progress NATS library for Zig](https://github.com/rutgerbrf/zig-nats)
+
 ## License
 
 Apache 2.0
