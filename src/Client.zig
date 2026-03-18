@@ -491,7 +491,7 @@ pub fn parseUrl(url: []const u8) error{InvalidUrl}!ParsedUrl {
     if (host.len == 0) return error.InvalidUrl;
 
     assert(host.len > 0);
-    assert(port > 0);
+    if (port == 0) return error.InvalidUrl;
     return .{
         .host = host,
         .port = port,
@@ -1681,7 +1681,6 @@ pub fn publish(
     subject: []const u8,
     payload: []const u8,
 ) !void {
-    assert(subject.len > 0);
     if (!State.atomicLoad(&self.state).canSend()) {
         return error.NotConnected;
     }
@@ -1714,8 +1713,6 @@ pub fn publishRequest(
     reply_to: []const u8,
     payload: []const u8,
 ) !void {
-    assert(subject.len > 0);
-    assert(reply_to.len > 0);
     if (!State.atomicLoad(&self.state).canSend()) {
         return error.NotConnected;
     }
@@ -1749,8 +1746,6 @@ pub fn publishWithHeaders(
     hdrs: []const headers.Entry,
     payload: []const u8,
 ) !void {
-    assert(subject.len > 0);
-    assert(hdrs.len > 0);
     if (!State.atomicLoad(&self.state).canSend()) return error.NotConnected;
     try pubsub.validatePublish(subject);
 
@@ -1785,9 +1780,6 @@ pub fn publishRequestWithHeaders(
     hdrs: []const headers.Entry,
     payload: []const u8,
 ) !void {
-    assert(subject.len > 0);
-    assert(reply_to.len > 0);
-    assert(hdrs.len > 0);
     if (!State.atomicLoad(&self.state).canSend()) return error.NotConnected;
     try pubsub.validatePublish(subject);
     try pubsub.validateReplyTo(reply_to);
@@ -1822,7 +1814,6 @@ pub fn publishWithHeaderMap(
     header_map: *const protocol.HeaderMap,
     payload: []const u8,
 ) !void {
-    assert(subject.len > 0);
     if (header_map.isEmpty()) return error.EmptyHeaders;
     if (!State.atomicLoad(&self.state).canSend()) return error.NotConnected;
     try pubsub.validatePublish(subject);
@@ -1857,7 +1848,6 @@ pub fn publishMsg(
     self: *Client,
     msg: *const Message,
 ) !void {
-    assert(msg.subject.len > 0);
     if (!State.atomicLoad(&self.state).canSend()) return error.NotConnected;
     try pubsub.validatePublish(msg.subject);
 
@@ -1913,8 +1903,6 @@ pub fn requestWithHeaders(
     timeout_ms: u32,
 ) !?Message {
     const allocator = self.allocator;
-    assert(subject.len > 0);
-    assert(hdrs.len > 0);
     assert(timeout_ms > 0);
     if (!State.atomicLoad(&self.state).canSend()) {
         return error.NotConnected;
@@ -2171,7 +2159,6 @@ pub fn request(
     timeout_ms: u32,
 ) !?Message {
     const allocator = self.allocator;
-    assert(subject.len > 0);
     assert(timeout_ms > 0);
     if (!State.atomicLoad(&self.state).canSend()) {
         return error.NotConnected;
@@ -2981,17 +2968,6 @@ pub inline fn getSubscriptionBySid(self: *Client, sid: u64) ?*Sub {
 }
 
 /// Sends PONG response.
-fn sendPong(self: *Client) !void {
-    assert(State.atomicLoad(&self.state).canSend());
-    const writer = self.active_writer;
-    writer.writeAll("PONG\r\n") catch {
-        return error.WriteFailed;
-    };
-    writer.flush() catch {
-        return error.WriteFailed;
-    };
-}
-
 /// Sends PING for health check.
 fn sendPing(self: *Client) !void {
     assert(self.state == .connected);
@@ -3006,6 +2982,11 @@ fn sendPing(self: *Client) !void {
     writer.flush() catch {
         return error.WriteFailed;
     };
+    if (self.use_tls) {
+        self.writer.interface.flush() catch {
+            return error.WriteFailed;
+        };
+    }
     const now = getNowNs(self.io);
     self.last_ping_sent_ns.store(now, .monotonic);
     const new_outstanding =

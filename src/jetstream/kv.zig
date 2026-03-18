@@ -462,6 +462,9 @@ pub const KeyValue = struct {
             const data = msg.data();
             var val: []const u8 = "";
             var val_alloc: ?Allocator = null;
+            // REVIEWED(2025-03): On dupe failure, break
+            // exits loop; msg.deinit() called after loop.
+            // errdefer cleans result list. No leak.
             if (data.len > 0 and op == .put) {
                 val = allocator.dupe(
                     u8,

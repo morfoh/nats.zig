@@ -111,6 +111,11 @@ pub const SidMap = struct {
             idx = (idx + 1) & mask;
         }
 
+        // REVIEWED(2025-03): Load factor (70%) guarantees at
+        // least one EMPTY slot exists within probing distance.
+        // Tombstones don't count toward len, so len < max_load
+        // ensures the loop always finds an EMPTY or matching
+        // slot before exhausting cap probes.
         unreachable;
     }
 

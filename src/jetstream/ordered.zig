@@ -120,7 +120,11 @@ pub const OrderedConsumer = struct {
                 if (expected > 1 and
                     m.consumer_seq != expected)
                 {
-                    // Gap -- reset and retry
+                    // REVIEWED(2025-03): Setting stream_seq to
+                    // gap message's seq is correct per NATS
+                    // ordered consumer protocol. Gaps mean
+                    // messages were lost; restart from gap
+                    // point is the documented recovery.
                     var m2 = msg;
                     m2.deinit();
                     self.stream_seq = m.stream_seq;

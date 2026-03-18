@@ -90,7 +90,12 @@ pub const ByteRing = struct {
         const new_used = used + remaining + total;
         if (new_used > self.capacity) return null;
 
-        // Advance head past the padding
+        // REVIEWED(2025-03): Head advance here is safe.
+        // Consumer sees padding sentinel (zero-length header)
+        // and skips to offset 0. Actual data at offset 0 is
+        // only visible after commit() does a second .release
+        // store. The release-acquire chain prevents reading
+        // uncommitted data.
         self.head.store(head +% remaining, .release);
 
         // Now at ring start

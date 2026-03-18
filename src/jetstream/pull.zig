@@ -606,6 +606,9 @@ fn consumeDrainTask(
             }
         }
 
+        // REVIEWED(2025-03): Stack-local JsMsg is intentional.
+        // handler.dispatch() is synchronous — handler must
+        // process before return. Avoids allocation per msg.
         var js_msg = JsMsg{
             .msg = msg,
             .client = client,

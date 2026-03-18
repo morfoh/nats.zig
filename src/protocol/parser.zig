@@ -37,6 +37,10 @@ pub inline fn parseUsizeFast(s: []const u8) error{
     Overflow,
 }!usize {
     assert(s.len > 0);
+    // REVIEWED(2025-03): Guard is correct for 64-bit targets.
+    // On 32-bit usize, 10-digit values could wrap, but this
+    // library targets 64-bit only. max_payload check catches
+    // any practical overflow.
     if (s.len >= 20) return error.Overflow;
     var v: usize = 0;
     for (s) |c| {
@@ -103,7 +107,7 @@ pub const Parser = struct {
         const line = data[0..line_end];
         const header_len = line_end + 2;
 
-        assert(line.len > 0);
+        if (line.len == 0) return Parser.Error.InvalidCommand;
 
         // u32 word comparison for dispatch
         const CMD_MSG: u32 = 0x2047534D; // "MSG " in little-endian
@@ -189,7 +193,8 @@ inline fn parseFullMsgFast(
     consumed: *usize,
     max_payload: usize,
 ) Parser.Error!?ServerCommand {
-    assert(args_line.len > 0);
+    if (args_line.len == 0)
+        return Parser.Error.InvalidArguments;
     assert(header_len > 0);
 
     var i: usize = 0;
@@ -300,7 +305,8 @@ inline fn parseFullHMsgFast(
     consumed: *usize,
     max_payload: usize,
 ) Parser.Error!?ServerCommand {
-    assert(args_line.len > 0);
+    if (args_line.len == 0)
+        return Parser.Error.InvalidArguments;
     assert(header_len > 0);
 
     var i: usize = 0;

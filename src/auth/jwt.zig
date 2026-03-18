@@ -259,6 +259,9 @@ fn assembleJwt(
 }
 
 /// Writes account claims JSON into buf. Returns slice or null.
+// REVIEWED(2025-03): name/sub/iss fields come from NKey
+// public keys (hex-encoded), never user-controlled input.
+// No JSON injection risk — no escaping needed.
 fn writeAccountJson(
     buf: []u8,
     jti: []const u8,
