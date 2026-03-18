@@ -23,7 +23,7 @@ Native Zig. Built on `std.Io`.
 ## Installation
 
 ```bash
-zig fetch --save https://github.com/M64GitHub/nats.zig/archive/refs/tags/v0.1.0.tar.gz
+zig fetch --save https://github.com/nats-io/nats.zig/archive/refs/tags/v0.1.0.tar.gz
 ```
 
 Then in `build.zig`:
@@ -845,8 +845,9 @@ var kv = try js.createKeyValue(.{
 
 // Put and get
 const rev = try kv.put("db.host", "localhost:5432");
-const entry = try kv.get("db.host");
-// entry.?.revision == rev, entry.?.operation == .put
+var entry = (try kv.get("db.host")).?;
+defer entry.deinit();
+// entry.revision == rev, entry.operation == .put
 
 // Optimistic concurrency
 const rev2 = try kv.update("db.host", "newhost:5432", rev);
@@ -867,7 +868,8 @@ defer {
 // Watch for real-time updates
 var watcher = try kv.watchAll();
 defer watcher.deinit();
-while (try watcher.next(5000)) |update| {
+while (try watcher.next(5000)) |*update| {
+    defer update.deinit();
     // update.key, update.revision, update.operation
 }
 ```

@@ -242,7 +242,7 @@ inline fn parseFullMsgFast(
     }
 
     // Parse payload length inline (with overflow guard)
-    if (payload_len_slice.len > 20) return Parser.Error.InvalidArguments;
+    if (payload_len_slice.len >= 20) return Parser.Error.InvalidArguments;
     var payload_len: usize = 0;
     for (payload_len_slice) |c| {
         if (c < '0' or c > '9') return Parser.Error.InvalidArguments;
@@ -358,7 +358,7 @@ inline fn parseFullHMsgFast(
     }
 
     // Parse hdr_len inline (with overflow guard)
-    if (hdr_len_slice.len > 20) return Parser.Error.InvalidArguments;
+    if (hdr_len_slice.len >= 20) return Parser.Error.InvalidArguments;
     var hdr_len: usize = 0;
     for (hdr_len_slice) |c| {
         if (c < '0' or c > '9') return Parser.Error.InvalidArguments;
@@ -366,7 +366,7 @@ inline fn parseFullHMsgFast(
     }
 
     // Parse total_content_len inline (with overflow guard)
-    if (total_len_slice.len > 20) return Parser.Error.InvalidArguments;
+    if (total_len_slice.len >= 20) return Parser.Error.InvalidArguments;
     var total_content_len: usize = 0;
     for (total_len_slice) |c| {
         if (c < '0' or c > '9') return Parser.Error.InvalidArguments;

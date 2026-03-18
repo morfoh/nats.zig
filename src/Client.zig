@@ -659,7 +659,7 @@ pub fn connect(
     opts: Options,
 ) !*Client {
     // Validate URL length - reject rather than truncate
-    if (url.len > defaults.Server.max_url_len) return error.UrlTooLong;
+    if (url.len >= defaults.Server.max_url_len) return error.UrlTooLong;
 
     const parsed = try parseUrl(url);
 
@@ -2963,6 +2963,10 @@ pub fn resetErrorNotifications(self: *Client) void {
 
 /// Get subscription by SID.
 /// Uses cached pointer for fast path when single subscription matches.
+// REVIEWED(2025-03): Lockless read is intentional (hot path).
+// sub_ptrs[slot] is nulled BEFORE sidmap.remove() (both under
+// sub_mutex). Worst case: io_task sees null = message dropped
+// (correct for unsubscribed). Sub not freed until after nulling.
 pub inline fn getSubscriptionBySid(self: *Client, sid: u64) ?*Sub {
     assert(sid > 0);
     // Fast path: cached subscription (common in benchmarks)
