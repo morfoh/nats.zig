@@ -735,6 +735,10 @@ pub fn testSubSlotIntegrity(
 }
 
 pub fn runAll(allocator: std.mem.Allocator) void {
+    std.debug.print(
+        "\n--- MultiThreading Tests ---\n",
+        .{},
+    );
     testMultiThreadPublish(allocator);
     testMultiThreadSubscribe(allocator);
     testMultiThreadStats(allocator);

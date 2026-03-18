@@ -152,10 +152,29 @@ pub fn streamInfo(
     return self.apiRequestNoPayload(StreamInfo, subj);
 }
 
-/// Purges a stream by name.
+/// Purges a stream by name. Optionally filter by
+/// subject to only purge matching messages.
 pub fn purgeStream(
     self: *JetStream,
     name: []const u8,
+) !Response(PurgeResponse) {
+    return self.purgeStreamFiltered(name, null);
+}
+
+/// Purges messages matching a specific subject.
+pub fn purgeStreamSubject(
+    self: *JetStream,
+    name: []const u8,
+    subject: []const u8,
+) !Response(PurgeResponse) {
+    std.debug.assert(subject.len > 0);
+    return self.purgeStreamFiltered(name, subject);
+}
+
+fn purgeStreamFiltered(
+    self: *JetStream,
+    name: []const u8,
+    subject: ?[]const u8,
 ) !Response(PurgeResponse) {
     std.debug.assert(name.len > 0);
     std.debug.assert(self.timeout_ms > 0);
@@ -165,6 +184,13 @@ pub fn purgeStream(
         "STREAM.PURGE.{s}",
         .{name},
     ) catch return errors.Error.SubjectTooLong;
+    if (subject) |s| {
+        return self.apiRequest(
+            PurgeResponse,
+            subj,
+            types.PurgeRequest{ .filter = s },
+        );
+    }
     return self.apiRequestNoPayload(
         PurgeResponse,
         subj,
@@ -173,7 +199,8 @@ pub fn purgeStream(
 
 // -- Consumer CRUD --
 
-/// Creates a consumer on the given stream.
+/// Creates a consumer on the given stream. The
+/// filter_subject (if any) is sent in the JSON body.
 pub fn createConsumer(
     self: *JetStream,
     stream: []const u8,
@@ -264,22 +291,61 @@ pub fn consumerInfo(
 
 // -- Listing & Account Info --
 
-/// Returns all stream names. Handles pagination
-/// internally. Caller owns the returned slice
-/// and must free it with the JetStream allocator.
+/// Returns stream names. Pass offset=0 for first
+/// page. Check response total/offset/limit for
+/// pagination. Returns one page per call.
 pub fn streamNames(
     self: *JetStream,
+) !Response(StreamNamesResponse) {
+    return self.streamNamesOffset(0);
+}
+
+/// Returns stream names starting at offset.
+pub fn streamNamesOffset(
+    self: *JetStream,
+    offset: u64,
 ) !Response(StreamNamesResponse) {
     std.debug.assert(self.timeout_ms > 0);
     return self.apiRequest(
         StreamNamesResponse,
         "STREAM.NAMES",
-        ListRequest{},
+        ListRequest{ .offset = offset },
     );
 }
 
-/// Returns stream info list. Handles pagination
-/// internally. Caller owns the returned Response.
+/// Returns all stream names across all pages.
+/// Caller owns the returned slice; free each
+/// string and the slice with allocator.
+pub fn allStreamNames(
+    self: *JetStream,
+    allocator: Allocator,
+) ![][]const u8 {
+    std.debug.assert(self.timeout_ms > 0);
+    var result: std.ArrayList([]const u8) = .empty;
+    errdefer {
+        for (result.items) |n|
+            allocator.free(n);
+        result.deinit(allocator);
+    }
+    var offset: u64 = 0;
+    while (true) {
+        var resp = try self.streamNamesOffset(
+            offset,
+        );
+        defer resp.deinit();
+        const names = resp.value.streams orelse
+            break;
+        for (names) |n| {
+            const owned = try allocator.dupe(u8, n);
+            try result.append(allocator, owned);
+        }
+        offset += names.len;
+        if (offset >= resp.value.total) break;
+    }
+    return result.toOwnedSlice(allocator);
+}
+
+/// Returns stream info list (one page).
 pub fn streams(
     self: *JetStream,
 ) !Response(StreamListResponse) {
@@ -292,7 +358,6 @@ pub fn streams(
 }
 
 /// Finds the stream name that captures a subject.
-/// Returns null if no stream matches.
 pub fn streamNameBySubject(
     self: *JetStream,
     subject: []const u8,
@@ -306,11 +371,19 @@ pub fn streamNameBySubject(
     );
 }
 
-/// Returns consumer names for a stream. Caller owns
-/// the returned Response.
+/// Returns consumer names (one page).
 pub fn consumerNames(
     self: *JetStream,
     stream: []const u8,
+) !Response(ConsumerNamesResponse) {
+    return self.consumerNamesOffset(stream, 0);
+}
+
+/// Returns consumer names at offset.
+pub fn consumerNamesOffset(
+    self: *JetStream,
+    stream: []const u8,
+    offset: u64,
 ) !Response(ConsumerNamesResponse) {
     std.debug.assert(stream.len > 0);
     std.debug.assert(self.timeout_ms > 0);
@@ -323,12 +396,11 @@ pub fn consumerNames(
     return self.apiRequest(
         ConsumerNamesResponse,
         subj,
-        ListRequest{},
+        ListRequest{ .offset = offset },
     );
 }
 
-/// Returns consumer info list for a stream. Caller
-/// owns the returned Response.
+/// Returns consumer info list (one page).
 pub fn consumers(
     self: *JetStream,
     stream: []const u8,
@@ -360,10 +432,144 @@ pub fn accountInfo(
     );
 }
 
+// -- Key-Value Store --
+
+const kv_mod = @import("kv.zig");
+pub const KeyValue = kv_mod.KeyValue;
+pub const KvWatcher = kv_mod.KvWatcher;
+const KeyValueConfig = types.KeyValueConfig;
+
+/// Creates a new key-value bucket backed by a
+/// JetStream stream. Returns a KeyValue handle.
+pub fn createKeyValue(
+    self: *JetStream,
+    cfg: KeyValueConfig,
+) !KeyValue {
+    std.debug.assert(cfg.bucket.len > 0);
+    std.debug.assert(cfg.bucket.len <= 64);
+    std.debug.assert(self.timeout_ms > 0);
+
+    var stream_buf: [68]u8 = undefined;
+    const stream_name = std.fmt.bufPrint(
+        &stream_buf,
+        "KV_{s}",
+        .{cfg.bucket},
+    ) catch return errors.Error.SubjectTooLong;
+
+    var subj_buf: [128]u8 = undefined;
+    const subj_pattern = std.fmt.bufPrint(
+        &subj_buf,
+        "$KV.{s}.>",
+        .{cfg.bucket},
+    ) catch return errors.Error.SubjectTooLong;
+
+    const subjects: [1][]const u8 = .{subj_pattern};
+    const hist: i64 = if (cfg.history) |h|
+        @intCast(h)
+    else
+        1;
+
+    // Duplicate window: 2min or TTL (whichever smaller)
+    const two_min_ns: i64 = 120_000_000_000;
+    const dup_window: ?i64 = if (cfg.ttl) |ttl|
+        @min(ttl, two_min_ns)
+    else
+        two_min_ns;
+
+    var resp = try self.createStream(.{
+        .name = stream_name,
+        .subjects = &subjects,
+        .max_msgs_per_subject = hist,
+        .max_bytes = cfg.max_bytes,
+        .max_age = cfg.ttl,
+        .max_msg_size = cfg.max_value_size,
+        .storage = cfg.storage orelse .file,
+        .num_replicas = cfg.replicas,
+        .discard = .new,
+        .duplicate_window = dup_window,
+        .max_msgs = -1,
+        .max_consumers = -1,
+        .allow_rollup_hdrs = true,
+        .deny_delete = true,
+        .deny_purge = false,
+        .allow_direct = true,
+        .mirror_direct = false,
+        .description = cfg.description,
+    });
+    resp.deinit();
+
+    return self.initKeyValue(cfg.bucket);
+}
+
+/// Binds to an existing key-value bucket.
+/// Returns error if the stream doesn't exist.
+pub fn keyValue(
+    self: *JetStream,
+    bucket_name: []const u8,
+) !KeyValue {
+    std.debug.assert(bucket_name.len > 0);
+    std.debug.assert(bucket_name.len <= 64);
+
+    var stream_buf: [68]u8 = undefined;
+    const stream_name = std.fmt.bufPrint(
+        &stream_buf,
+        "KV_{s}",
+        .{bucket_name},
+    ) catch return errors.Error.SubjectTooLong;
+
+    // Verify stream exists
+    var resp = try self.streamInfo(stream_name);
+    resp.deinit();
+
+    return self.initKeyValue(bucket_name);
+}
+
+/// Deletes a key-value bucket and its backing stream.
+pub fn deleteKeyValue(
+    self: *JetStream,
+    bucket_name: []const u8,
+) !Response(DeleteResponse) {
+    std.debug.assert(bucket_name.len > 0);
+    var stream_buf: [68]u8 = undefined;
+    const stream_name = std.fmt.bufPrint(
+        &stream_buf,
+        "KV_{s}",
+        .{bucket_name},
+    ) catch return errors.Error.SubjectTooLong;
+    return self.deleteStream(stream_name);
+}
+
+fn initKeyValue(
+    self: *JetStream,
+    bucket_name: []const u8,
+) KeyValue {
+    std.debug.assert(bucket_name.len > 0);
+    var kv = KeyValue{ .js = self };
+
+    @memcpy(
+        kv.bucket_buf[0..bucket_name.len],
+        bucket_name,
+    );
+    kv.bucket_len = @intCast(bucket_name.len);
+
+    var stream_buf: [68]u8 = undefined;
+    const sn = std.fmt.bufPrint(
+        &stream_buf,
+        "KV_{s}",
+        .{bucket_name},
+    ) catch unreachable;
+    @memcpy(kv.stream_buf[0..sn.len], sn);
+    kv.stream_len = @intCast(sn.len);
+
+    return kv;
+}
+
 // -- JetStream Publish --
 
 /// Publishes a message to a JetStream stream subject
-/// and waits for a PubAck.
+/// and waits for a PubAck. Retries up to 2 times on
+/// NoResponders (matching Go client behavior for
+/// transient leadership changes).
 pub fn publish(
     self: *JetStream,
     subject: []const u8,
@@ -371,15 +577,57 @@ pub fn publish(
 ) !Response(PubAck) {
     std.debug.assert(subject.len > 0);
     std.debug.assert(payload.len <= 1048576);
-    const resp = self.client.request(
-        subject,
-        payload,
-        self.timeout_ms,
-    ) catch |err| return err;
-    var msg = resp orelse
-        return errors.Error.Timeout;
-    defer msg.deinit();
-    return self.parsePubAckResponse(&msg);
+    return self.publishRetry(subject, payload, null);
+}
+
+fn publishRetry(
+    self: *JetStream,
+    subject: []const u8,
+    payload: []const u8,
+    hdrs: ?[]const headers.Entry,
+) !Response(PubAck) {
+    const max_retries: u32 = 2;
+    const retry_wait_ns: u64 = 250_000_000;
+    var attempt: u32 = 0;
+
+    while (true) {
+        const resp = if (hdrs) |h|
+            self.client.requestWithHeaders(
+                subject,
+                h,
+                payload,
+                self.timeout_ms,
+            ) catch |err| return err
+        else
+            self.client.request(
+                subject,
+                payload,
+                self.timeout_ms,
+            ) catch |err| return err;
+
+        var msg = resp orelse
+            return errors.Error.Timeout;
+
+        if (msg.isNoResponders()) {
+            msg.deinit();
+            attempt += 1;
+            if (attempt > max_retries)
+                return errors.Error.NoResponders;
+            sleepNs(retry_wait_ns);
+            continue;
+        }
+
+        defer msg.deinit();
+        return self.parsePubAckResponse(&msg);
+    }
+}
+
+fn sleepNs(ns: u64) void {
+    var ts: std.posix.timespec = .{
+        .sec = @intCast(ns / 1_000_000_000),
+        .nsec = @intCast(ns % 1_000_000_000),
+    };
+    _ = std.posix.system.nanosleep(&ts, &ts);
 }
 
 /// Publishes with header-based options (msg-id, expected
@@ -446,23 +694,18 @@ pub fn publishWithOpts(
         hdr_count += 1;
     }
 
-    const resp = self.client.requestWithHeaders(
+    return self.publishRetry(
         subject,
-        hdr_entries[0..hdr_count],
         payload,
-        self.timeout_ms,
-    ) catch |err| return err;
-    var msg = resp orelse
-        return errors.Error.Timeout;
-    defer msg.deinit();
-    return self.parsePubAckResponse(&msg);
+        hdr_entries[0..hdr_count],
+    );
 }
 
 // -- Internal helpers --
 
 /// Builds the full API subject and sends a request with
 /// JSON payload, parsing the response.
-fn apiRequest(
+pub fn apiRequest(
     self: *JetStream,
     comptime T: type,
     api_subject: []const u8,

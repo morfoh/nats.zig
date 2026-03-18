@@ -18,6 +18,12 @@ pub const PullSubscription = pull_mod.PullSubscription;
 pub const MessagesContext = pull_mod.MessagesContext;
 const ordered_mod = @import("jetstream/ordered.zig");
 pub const OrderedConsumer = ordered_mod.OrderedConsumer;
+const kv_mod = @import("jetstream/kv.zig");
+pub const KeyValue = kv_mod.KeyValue;
+pub const KvWatcher = kv_mod.KvWatcher;
+pub const KeyValueConfig = types.KeyValueConfig;
+pub const KeyValueEntry = types.KeyValueEntry;
+pub const KeyValueOp = types.KeyValueOp;
 
 // Consumer abstractions
 pub const JsMsgHandler = consumer.JsMsgHandler;

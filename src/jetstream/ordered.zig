@@ -145,39 +145,45 @@ pub const OrderedConsumer = struct {
         self.serial += 1;
         self.consumer_seq = 0;
 
-        // Generate unique name
+        // Generate unique name (avoid _ prefix which
+        // NATS reserves for internal use)
         const name = std.fmt.bufPrint(
             &self.consumer_name_buf,
-            "_oc_{d}_{d}",
-            .{ self.serial, @intFromPtr(self) },
+            "oc{d}x{d}",
+            .{ self.serial, @intFromPtr(self) % 99999 },
         ) catch unreachable;
         self.consumer_name_len = @intCast(name.len);
 
-        // Build config for ephemeral ordered consumer
-        var cfg = types.ConsumerConfig{
+        // Go's ordered consumer ALWAYS uses
+        // DeliverByStartSequencePolicy (ordered.go:626)
+        var next_seq: u64 = 1;
+        if (self.stream_seq > 0) {
+            next_seq = self.stream_seq + 1;
+        } else if (self.config.opt_start_seq) |s| {
+            next_seq = s;
+        }
+
+        const cfg = types.ConsumerConfig{
             .name = name,
+            .deliver_policy = .by_start_sequence,
+            .opt_start_seq = next_seq,
             .ack_policy = .none,
             .max_deliver = 1,
+            .mem_storage = true,
             .inactive_threshold = 300_000_000_000,
             .num_replicas = 1,
             .headers_only = self.config.headers_only,
             .filter_subject = self.config.filter_subject,
         };
 
-        // Resume from last position
-        if (self.stream_seq > 0) {
-            cfg.deliver_policy = .by_start_sequence;
-            cfg.opt_start_seq = self.stream_seq + 1;
-        } else if (self.config.deliver_policy) |dp| {
-            cfg.deliver_policy = dp;
-            cfg.opt_start_seq = self.config.opt_start_seq;
-        }
-
         var resp = try self.js.createConsumer(
             self.stream,
             cfg,
         );
         resp.deinit();
+
+        // Ensure server has processed the consumer
+        self.js.client.flush(5_000_000_000) catch {};
 
         self.pull = PullSubscription{
             .js = self.js,

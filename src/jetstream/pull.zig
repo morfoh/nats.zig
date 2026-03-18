@@ -36,6 +36,8 @@ pub const PullSubscription = struct {
     /// Fetches messages from the consumer. Returns a
     /// FetchResult that owns the messages. Caller must
     /// call `deinit()` on the result when done.
+    /// Auto-configures 5s heartbeat for requests > 10s
+    /// (matching Go client behavior).
     pub fn fetch(
         self: *PullSubscription,
         opts: FetchOpts,
@@ -43,9 +45,15 @@ pub const PullSubscription = struct {
         std.debug.assert(opts.max_messages > 0);
         std.debug.assert(self.stream.len > 0);
         std.debug.assert(self.consumer.len > 0);
+        // Auto-heartbeat for long requests (Go default)
+        const hb: ?i64 = if (opts.timeout_ms > 10000)
+            5_000_000_000
+        else
+            null;
         return self.fetchInternal(.{
             .batch = @intCast(opts.max_messages),
             .expires = msToNs(opts.timeout_ms),
+            .idle_heartbeat = hb,
         }, opts.timeout_ms);
     }
 

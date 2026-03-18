@@ -101,6 +101,7 @@ pub const ConsumerConfig = struct {
     inactive_threshold: ?i64 = null,
     num_replicas: ?i32 = null,
     headers_only: ?bool = null,
+    mem_storage: ?bool = null,
     // Push consumer fields (v1.1 ready, harmless as null)
     deliver_subject: ?[]const u8 = null,
     deliver_group: ?[]const u8 = null,
@@ -174,6 +175,12 @@ pub const DeleteResponse = struct {
 
 // -- Purge response --
 
+pub const PurgeRequest = struct {
+    filter: ?[]const u8 = null,
+    seq: ?u64 = null,
+    keep: ?u64 = null,
+};
+
 pub const PurgeResponse = struct {
     type: ?[]const u8 = null,
     @"error": ?ApiErrorJson = null,
@@ -223,6 +230,50 @@ pub const ConsumerListResponse = struct {
 pub const ListRequest = struct {
     offset: u64 = 0,
     subject: ?[]const u8 = null,
+};
+
+// -- Key-Value types --
+
+pub const KeyValueConfig = struct {
+    bucket: []const u8,
+    description: ?[]const u8 = null,
+    max_value_size: ?i32 = null,
+    history: ?u8 = null,
+    ttl: ?i64 = null,
+    max_bytes: ?i64 = null,
+    storage: ?StorageType = null,
+    replicas: ?i32 = null,
+};
+
+pub const KeyValueOp = enum { put, delete, purge };
+
+pub const KeyValueEntry = struct {
+    bucket: []const u8,
+    key: []const u8,
+    value: []const u8,
+    revision: u64,
+    operation: KeyValueOp,
+};
+
+// -- Stream MSG.GET types --
+
+pub const MsgGetRequest = struct {
+    last_by_subj: ?[]const u8 = null,
+    seq: ?u64 = null,
+};
+
+pub const MsgGetResponse = struct {
+    type: ?[]const u8 = null,
+    @"error": ?ApiErrorJson = null,
+    message: ?StoredMsg = null,
+};
+
+pub const StoredMsg = struct {
+    subject: ?[]const u8 = null,
+    seq: u64 = 0,
+    data: ?[]const u8 = null,
+    hdrs: ?[]const u8 = null,
+    time: ?[]const u8 = null,
 };
 
 // -- Account info --
