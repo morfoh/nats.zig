@@ -393,11 +393,11 @@ test "FixedSubscription activate subject at max length" {
     var client = TestClient{};
     var sub = TestSub.initEmpty();
 
-    // Config has max_subject_len = 64
-    const max_subject = "a" ** 64;
+    // max_subject_len is exclusive (>= rejects it)
+    const max_subject = "a" ** 63;
     try sub.activate(&client, 1, max_subject, null);
 
-    try testing.expectEqual(@as(usize, 64), sub.subject().len);
+    try testing.expectEqual(@as(usize, 63), sub.subject().len);
     try testing.expectEqualStrings(max_subject, sub.subject());
 }
 
@@ -668,8 +668,8 @@ test "State enum values distinct" {
 
 test "FixedSubscription minimal config" {
     const MinConfig = subscription.FixedSubConfig{
-        .max_subject_len = 1,
-        .max_queue_group_len = 1,
+        .max_subject_len = 2,
+        .max_queue_group_len = 2,
         .queue_capacity = 1,
     };
 
@@ -697,9 +697,9 @@ test "FixedSubscription large config" {
     var client = TestClient{};
     var sub = LargeSub.initEmpty();
 
-    const long_subject = "a" ** 1024;
+    const long_subject = "a" ** 1023;
     try sub.activate(&client, 1, long_subject, null);
-    try testing.expectEqual(@as(usize, 1024), sub.subject().len);
+    try testing.expectEqual(@as(usize, 1023), sub.subject().len);
 }
 
 test "FixedSubscription large queue group" {

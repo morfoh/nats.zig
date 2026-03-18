@@ -115,7 +115,7 @@ fn setupDynamicAuth(
         out_creds,
         user_jwt,
         user_seed,
-    );
+    ) catch return null;
 
     // Write server config file
     writeConfig(io, op_jwt, acct_pub, acct_jwt) catch

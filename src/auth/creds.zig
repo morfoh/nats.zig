@@ -111,10 +111,11 @@ pub fn format(
     buf: []u8,
     jwt_str: []const u8,
     seed_str: []const u8,
-) []const u8 {
+) error{BufferTooSmall}![]const u8 {
     assert(jwt_str.len > 0);
     assert(seed_str.len > 0);
-    assert(buf.len >= jwt_str.len + seed_str.len + 256);
+    if (buf.len < jwt_str.len + seed_str.len + 256)
+        return error.BufferTooSmall;
 
     var w = Io.Writer.fixed(buf);
     w.writeAll(JWT_BEGIN) catch unreachable;
@@ -272,7 +273,7 @@ test "format and parse roundtrip" {
         "7NSWFFEW63UXMRLFM2XLAXK4GY";
 
     var buf: [2048]u8 = undefined;
-    const formatted = format(&buf, jwt_str, seed_str);
+    const formatted = try format(&buf, jwt_str, seed_str);
 
     const creds = try parse(formatted);
     try std.testing.expectEqualStrings(jwt_str, creds.jwt);
@@ -327,7 +328,7 @@ test "realistic generated content roundtrip" {
 
     // Format credentials
     var creds_buf: [4096]u8 = undefined;
-    const formatted = format(
+    const formatted = try format(
         &creds_buf,
         jwt_str,
         seed_str,

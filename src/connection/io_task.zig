@@ -528,6 +528,7 @@ inline fn tryRouteBufferedMessages(
                     }
                     client.server_info = info;
                     client.max_payload = info.max_payload;
+                    client.parser.max_payload = info.max_payload;
                 },
                 .ok => {},
                 .err => |err_msg| {

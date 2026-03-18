@@ -120,7 +120,7 @@ pub fn FixedSubscription(
             queue_grp: ?[]const u8,
         ) ActivateError!void {
             if (subj.len == 0) return error.EmptySubject;
-            if (subj.len > config.max_subject_len) {
+            if (subj.len >= config.max_subject_len) {
                 return error.SubjectTooLong;
             }
             assert(subj.len > 0);

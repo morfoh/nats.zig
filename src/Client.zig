@@ -3172,7 +3172,7 @@ pub fn deinit(self: *Client) void {
 /// Backup all active subscriptions for restoration after reconnect.
 /// Stores SID, subject, and queue_group in inline buffers (no allocation).
 /// Returns error if any subject > 256 bytes or queue_group > 64 bytes.
-pub fn backupSubscriptions(self: *Client) error{SubjectTooLong}!void {
+pub fn backupSubscriptions(self: *Client) error{ SubjectTooLong, QueueGroupTooLong }!void {
     self.sub_mutex.lockUncancelable(self.io);
     defer self.sub_mutex.unlock(self.io);
 
@@ -3201,7 +3201,7 @@ pub fn backupSubscriptions(self: *Client) error{SubjectTooLong}!void {
                             .msg = null,
                         },
                     });
-                    return error.SubjectTooLong;
+                    return error.QueueGroupTooLong;
                 }
             }
 

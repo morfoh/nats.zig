@@ -62,7 +62,7 @@ pub fn encodeAccountClaims(
 ) Error![]const u8 {
     assert(subject.len > 0);
     assert(name.len > 0);
-    assert(buf.len >= 512);
+    if (buf.len < 512) return error.BufferTooSmall;
 
     var pk_buf: [56]u8 = undefined;
     const iss = signer.publicKey(&pk_buf);
@@ -107,7 +107,7 @@ pub fn encodeUserClaims(
 ) Error![]const u8 {
     assert(subject.len > 0);
     assert(name.len > 0);
-    assert(buf.len >= 512);
+    if (buf.len < 512) return error.BufferTooSmall;
 
     var pk_buf: [56]u8 = undefined;
     const iss = signer.publicKey(&pk_buf);
@@ -152,7 +152,7 @@ pub fn encodeOperatorClaims(
 ) Error![]const u8 {
     assert(subject.len > 0);
     assert(name.len > 0);
-    assert(buf.len >= 512);
+    if (buf.len < 512) return error.BufferTooSmall;
 
     var pk_buf: [56]u8 = undefined;
     const iss = signer.publicKey(&pk_buf);
@@ -207,7 +207,7 @@ fn assembleJwt(
     signer: nkey.KeyPair,
 ) Error![]const u8 {
     assert(payload.len > 0);
-    assert(buf.len >= 512);
+    if (buf.len < 512) return error.BufferTooSmall;
 
     const payload_b64_len = base64.Encoder.calcSize(
         payload.len,
@@ -270,7 +270,7 @@ fn writeAccountJson(
 ) ?[]const u8 {
     assert(iss.len > 0);
     assert(sub.len > 0);
-    assert(buf.len >= 256);
+    if (buf.len < 256) return null;
 
     var w = Io.Writer.fixed(buf);
     w.writeAll("{\"jti\":\"") catch return null;
@@ -334,7 +334,7 @@ fn writeUserJson(
 ) ?[]const u8 {
     assert(iss.len > 0);
     assert(sub.len > 0);
-    assert(buf.len >= 256);
+    if (buf.len < 256) return null;
 
     var w = Io.Writer.fixed(buf);
     w.writeAll("{\"jti\":\"") catch return null;
@@ -407,7 +407,7 @@ fn writeOperatorJson(
 ) ?[]const u8 {
     assert(iss.len > 0);
     assert(sub.len > 0);
-    assert(buf.len >= 256);
+    if (buf.len < 256) return null;
 
     var w = Io.Writer.fixed(buf);
     w.writeAll("{\"jti\":\"") catch return null;

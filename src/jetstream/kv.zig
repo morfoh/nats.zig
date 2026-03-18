@@ -49,13 +49,19 @@ pub const KeyValue = struct {
         return self.stream_buf[0..self.stream_len];
     }
 
-    /// Builds the KV subject for a key.
+    /// Builds the KV subject for a key. Validates key
+    /// contains no wildcards or control characters.
     fn kvSubject(
         self: *const KeyValue,
         key: []const u8,
         buf: []u8,
     ) ![]const u8 {
         std.debug.assert(key.len > 0);
+        // Reject wildcards and control chars in keys
+        for (key) |c| {
+            if (c == '*' or c == '>' or c < 0x20)
+                return errors.Error.InvalidKey;
+        }
         return std.fmt.bufPrint(
             buf,
             "$KV.{s}.{s}",

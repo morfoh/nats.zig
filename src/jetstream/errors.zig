@@ -78,6 +78,8 @@ pub const Error = error{
     NoHeartbeat,
     ConsumerDeleted,
     OrderedReset,
+    InvalidKey,
+    InvalidData,
     KeyNotFound,
     WrongLastRevision,
 };

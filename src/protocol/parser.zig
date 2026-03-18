@@ -64,6 +64,9 @@ inline fn findCRLF(data: []const u8) ?usize {
 /// Handles partial data by returning null (need more bytes).
 /// Allocates only for INFO command (ServerInfo string copies).
 pub const Parser = struct {
+    /// Max payload size from server INFO (DoS guard).
+    max_payload: usize = 1048576,
+
     /// Parse error types.
     pub const Error = error{
         InvalidCommand,
@@ -92,7 +95,6 @@ pub const Parser = struct {
         data: []const u8,
         consumed: *usize,
     ) (Error || Allocator.Error)!?ServerCommand {
-        _ = self;
         consumed.* = 0;
 
         if (data.len == 0) return null;
@@ -116,7 +118,7 @@ pub const Parser = struct {
 
             // MSG <subject> <sid> [reply-to] <size>
             if (cmd == CMD_MSG) {
-                return parseFullMsgFast(data, line[4..], header_len, consumed);
+                return parseFullMsgFast(data, line[4..], header_len, consumed, self.max_payload);
             }
             // PING (exact 4 chars)
             if (cmd == CMD_PING and line.len == 4) {
@@ -151,7 +153,7 @@ pub const Parser = struct {
             }
             // HMSG <subject> <sid> [reply-to] <hdr_len> <total_len>
             if (cmd == CMD_HMSG and line.len >= 5 and line[4] == ' ') {
-                return parseFullHMsgFast(data, line[5..], header_len, consumed);
+                return parseFullHMsgFast(data, line[5..], header_len, consumed, self.max_payload);
             }
             // -ERR <message>
             if (cmd == CMD_ERR and line.len >= 5 and line[4] == ' ') {
@@ -185,6 +187,7 @@ inline fn parseFullMsgFast(
     args_line: []const u8,
     header_len: usize,
     consumed: *usize,
+    max_payload: usize,
 ) Parser.Error!?ServerCommand {
     assert(args_line.len > 0);
     assert(header_len > 0);
@@ -246,6 +249,9 @@ inline fn parseFullMsgFast(
         payload_len = payload_len *% 10 +% @as(usize, c - '0');
     }
 
+    if (payload_len > max_payload)
+        return Parser.Error.PayloadTooLarge;
+
     // Calculate total message size: header + payload + trailing \r\n
     const total_len = header_len + payload_len + 2;
 
@@ -282,7 +288,7 @@ inline fn parseFullMsg(
     header_len: usize,
     consumed: *usize,
 ) Parser.Error!?ServerCommand {
-    return parseFullMsgFast(data, args_line, header_len, consumed);
+    return parseFullMsgFast(data, args_line, header_len, consumed, 1048576);
 }
 
 /// Parse complete HMSG using manual byte scanning (no iterator allocation).
@@ -292,6 +298,7 @@ inline fn parseFullHMsgFast(
     args_line: []const u8,
     header_len: usize,
     consumed: *usize,
+    max_payload: usize,
 ) Parser.Error!?ServerCommand {
     assert(args_line.len > 0);
     assert(header_len > 0);
@@ -367,6 +374,8 @@ inline fn parseFullHMsgFast(
     }
 
     if (hdr_len > total_content_len) return Parser.Error.InvalidArguments;
+    if (total_content_len > max_payload)
+        return Parser.Error.PayloadTooLarge;
 
     // Calculate total message size: header line + content + trailing \r\n
     const total_len = header_len + total_content_len + 2;
@@ -409,7 +418,7 @@ inline fn parseFullHMsg(
     header_len: usize,
     consumed: *usize,
 ) Parser.Error!?ServerCommand {
-    return parseFullHMsgFast(data, args_line, header_len, consumed);
+    return parseFullHMsgFast(data, args_line, header_len, consumed, 1048576);
 }
 
 test {
