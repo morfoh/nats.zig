@@ -172,7 +172,7 @@ pub const HeartbeatMonitor = struct {
         self: *const HeartbeatMonitor,
     ) u32 {
         std.debug.assert(self.heartbeat_ms > 0);
-        return self.heartbeat_ms * 2;
+        return self.heartbeat_ms *| 2;
     }
 
     /// Call when any message or heartbeat is received.

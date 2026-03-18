@@ -25,7 +25,33 @@ const HeartbeatMonitor = consumer_mod.HeartbeatMonitor;
 pub const PullSubscription = struct {
     js: *JetStream,
     stream: []const u8,
-    consumer: []const u8,
+    /// Inline consumer name buffer (avoids dangling
+    /// slices from external buffers).
+    consumer_buf: [48]u8 = undefined,
+    consumer_len: u8 = 0,
+
+    /// Returns consumer name as a slice into the
+    /// inline buffer. Safe after move/copy.
+    pub fn consumerName(
+        self: *const PullSubscription,
+    ) []const u8 {
+        std.debug.assert(self.consumer_len > 0);
+        return self.consumer_buf[0..self.consumer_len];
+    }
+
+    /// Sets the consumer name from a source slice.
+    pub fn setConsumer(
+        self: *PullSubscription,
+        name: []const u8,
+    ) void {
+        std.debug.assert(name.len > 0);
+        std.debug.assert(name.len <= self.consumer_buf.len);
+        @memcpy(
+            self.consumer_buf[0..name.len],
+            name,
+        );
+        self.consumer_len = @intCast(name.len);
+    }
 
     /// Options for pull-based message fetching.
     pub const FetchOpts = struct {
@@ -44,7 +70,7 @@ pub const PullSubscription = struct {
     ) !FetchResult {
         std.debug.assert(opts.max_messages > 0);
         std.debug.assert(self.stream.len > 0);
-        std.debug.assert(self.consumer.len > 0);
+        std.debug.assert(self.consumer_len > 0);
         // Auto-heartbeat for long requests (Go default)
         const hb: ?i64 = if (opts.timeout_ms > 10000)
             5_000_000_000
@@ -65,7 +91,7 @@ pub const PullSubscription = struct {
     ) !FetchResult {
         std.debug.assert(max_messages > 0);
         std.debug.assert(self.stream.len > 0);
-        std.debug.assert(self.consumer.len > 0);
+        std.debug.assert(self.consumer_len > 0);
         return self.fetchInternal(.{
             .batch = @intCast(max_messages),
             .no_wait = true,
@@ -128,7 +154,7 @@ pub const PullSubscription = struct {
         const pull_subj = std.fmt.bufPrint(
             &subj_buf,
             "{s}CONSUMER.MSG.NEXT.{s}.{s}",
-            .{ prefix, self.stream, self.consumer },
+            .{ prefix, self.stream, self.consumerName() },
         ) catch return errors.Error.SubjectTooLong;
 
         const payload = try types.jsonStringify(
@@ -202,7 +228,7 @@ pub const PullSubscription = struct {
         opts: ConsumeOpts,
     ) !MessagesContext {
         std.debug.assert(self.stream.len > 0);
-        std.debug.assert(self.consumer.len > 0);
+        std.debug.assert(self.consumer_len > 0);
         std.debug.assert(opts.max_messages > 0);
         std.debug.assert(opts.expires_ms > 0);
         // heartbeat must be less than expires
@@ -239,7 +265,7 @@ pub const PullSubscription = struct {
         opts: ConsumeOpts,
     ) !ConsumeContext {
         std.debug.assert(self.stream.len > 0);
-        std.debug.assert(self.consumer.len > 0);
+        std.debug.assert(self.consumer_len > 0);
         std.debug.assert(opts.max_messages > 0);
         std.debug.assert(opts.expires_ms > 0);
         std.debug.assert(
@@ -260,7 +286,7 @@ pub const PullSubscription = struct {
             client,
             sub.subject,
             self.stream,
-            self.consumer,
+            self.consumerName(),
             opts,
         );
 
@@ -279,7 +305,7 @@ pub const PullSubscription = struct {
                 opts,
                 &ctx,
                 self.stream,
-                self.consumer,
+                self.consumerName(),
             },
         );
 
@@ -337,7 +363,7 @@ pub const MessagesContext = struct {
                 client,
                 self.sub.subject,
                 self.pull.stream,
-                self.pull.consumer,
+                self.pull.consumerName(),
                 self.opts,
             );
             self.batch_pending = true;
@@ -402,7 +428,7 @@ pub const MessagesContext = struct {
                     client,
                     self.sub.subject,
                     self.pull.stream,
-                    self.pull.consumer,
+                    self.pull.consumerName(),
                     self.opts,
                 ) catch {};
                 self.delivered = 0;
@@ -563,6 +589,16 @@ fn consumeDrainTask(
             switch (code) {
                 404, 408 => {
                     if (ctx.state == .draining) break;
+                    // Re-issue pull (batch expired)
+                    issuePull(
+                        js,
+                        client,
+                        sub.subject,
+                        stream,
+                        consumer_name,
+                        opts,
+                    ) catch break;
+                    delivered = 0;
                     continue;
                 },
                 409 => break,

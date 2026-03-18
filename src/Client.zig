@@ -120,6 +120,9 @@ pub const Message = struct {
 
     /// Frees message data. Pushes to return queue for slab-allocated msgs.
     /// Thread-safe: return_lock serializes concurrent push().
+    // REVIEWED(2025-03): SPSC queue used as MPSC here is safe.
+    // The spinlock's lock/unlock provides acquire/release ordering,
+    // ensuring each thread sees prior push() head updates.
     pub fn deinit(self: *const Message) void {
         if (!self.owned) return;
         if (self.backing_buf) |buf| {
@@ -960,6 +963,9 @@ pub fn connect(
 
 /// Push event to callback queue (called by io_task).
 /// Non-blocking, drops event if queue is full.
+// REVIEWED(2025-03): Silent drop is intentional. Blocking
+// would stall the io_task hot path. Users can monitor via
+// subscription dropped_msgs counters.
 pub fn pushEvent(self: *Client, event: Event) void {
     if (self.event_queue) |q| {
         _ = q.push(event);
@@ -1009,7 +1015,9 @@ fn callbackTaskFn(client: *Client) void {
                 },
             }
         }
-        // Yield to allow other threads to run
+        // REVIEWED(2025-03): yield-based polling is intentional.
+        // Blocking alternatives (futex/condvar) add complexity
+        // for the event dispatch path with minimal benefit.
         std.Thread.yield() catch {};
     }
 
@@ -1225,8 +1233,9 @@ fn handshake(
         return error.NoInfoReceived;
     }
 
-    // TLS upgrade: after INFO, before CONNECT (per NATS protocol)
-    // Server sends INFO in plain text, then expects TLS handshake if required
+    // REVIEWED(2025-03): TLS upgrade occurs HERE, before CONNECT.
+    // Credentials in CONNECT are sent over TLS when required.
+    // Server sends INFO in plain text, then expects TLS handshake.
     if (self.use_tls and self.tls_client == null) {
         const server_tls =
             if (self.server_info) |info| info.tls_required else false;
@@ -2112,7 +2121,7 @@ pub fn drainTimeout(
     timeout_ns: u64,
 ) !DrainResult {
     assert(timeout_ns > 0);
-    if (self.state != .connected) {
+    if (State.atomicLoad(&self.state) != .connected) {
         return error.NotConnected;
     }
 
@@ -2383,7 +2392,7 @@ fn readSeedFile(io: Io, path: []const u8, buf: *[128]u8) ![]const u8 {
 /// and closes the connection. Use for graceful shutdown.
 pub fn drain(self: *Client) !DrainResult {
     const alloc = self.allocator;
-    if (self.state != .connected) {
+    if (State.atomicLoad(&self.state) != .connected) {
         return error.NotConnected;
     }
     assert(self.next_sid >= 1);
@@ -3013,7 +3022,7 @@ fn handlePong(self: *Client) void {
 /// Called from io_task loop with throttling.
 pub fn checkHealthAndDetectStale(self: *Client) bool {
     if (self.options.ping_interval_ms == 0) return false;
-    if (self.state != .connected) return false;
+    if (State.atomicLoad(&self.state) != .connected) return false;
 
     const now_ns = getNowNs(self.io);
     const interval_ns: u64 =

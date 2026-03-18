@@ -80,11 +80,34 @@ pub const ServerInfo = struct {
             return error.InvalidServerInfo;
         }
 
+        const sid = try allocator.dupe(u8, info.server_id);
+        errdefer allocator.free(sid);
+        const sname = try allocator.dupe(u8, info.server_name);
+        errdefer allocator.free(sname);
+        const ver = try allocator.dupe(u8, info.version);
+        errdefer allocator.free(ver);
+        const host = try allocator.dupe(u8, info.host);
+        errdefer allocator.free(host);
+        const nonce = if (info.nonce) |n|
+            try allocator.dupe(u8, n)
+        else
+            null;
+        errdefer if (nonce) |n| allocator.free(n);
+        const cip = if (info.client_ip) |ip|
+            try allocator.dupe(u8, ip)
+        else
+            null;
+        errdefer if (cip) |c| allocator.free(c);
+        const cluster = if (info.cluster) |c|
+            try allocator.dupe(u8, c)
+        else
+            null;
+
         var owned = ServerInfo{
-            .server_id = try allocator.dupe(u8, info.server_id),
-            .server_name = try allocator.dupe(u8, info.server_name),
-            .version = try allocator.dupe(u8, info.version),
-            .host = try allocator.dupe(u8, info.host),
+            .server_id = sid,
+            .server_name = sname,
+            .version = ver,
+            .host = host,
             .proto = info.proto,
             .port = info.port,
             .headers = info.headers,
@@ -93,16 +116,10 @@ pub const ServerInfo = struct {
             .tls_required = info.tls_required,
             .tls_available = info.tls_available,
             .auth_required = info.auth_required,
-            .nonce = if (info.nonce) |n| try allocator.dupe(u8, n) else null,
+            .nonce = nonce,
             .client_id = info.client_id,
-            .client_ip = if (info.client_ip) |ip|
-                try allocator.dupe(u8, ip)
-            else
-                null,
-            .cluster = if (info.cluster) |c|
-                try allocator.dupe(u8, c)
-            else
-                null,
+            .client_ip = cip,
+            .cluster = cluster,
         };
 
         // Copy connect_urls (inline, no allocation)

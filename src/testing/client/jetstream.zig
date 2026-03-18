@@ -1086,8 +1086,8 @@ pub fn testMetadata(
     var pull = nats.jetstream.PullSubscription{
         .js = &js,
         .stream = "TEST_META",
-        .consumer = "meta-cons",
     };
+    pull.setConsumer("meta-cons");
 
     var msg = (pull.next(5000) catch {
         reportResult(
@@ -1220,8 +1220,8 @@ pub fn testFetchNoWait(
     var pull = nats.jetstream.PullSubscription{
         .js = &js,
         .stream = "TEST_NOWAIT",
-        .consumer = "nowait-cons",
     };
+    pull.setConsumer("nowait-cons");
 
     // Fetch no-wait on empty consumer -> 0 messages
     var result = pull.fetchNoWait(10) catch {
@@ -1341,8 +1341,8 @@ pub fn testMessages(
     var pull = nats.jetstream.PullSubscription{
         .js = &js,
         .stream = "TEST_MSGS",
-        .consumer = "msgs-cons",
     };
+    pull.setConsumer("msgs-cons");
 
     var ctx = pull.messages(.{
         .max_messages = 10,
@@ -1483,8 +1483,8 @@ pub fn testConsume(
     var pull = nats.jetstream.PullSubscription{
         .js = &js,
         .stream = "TEST_CONSUME",
-        .consumer = "consume-cons",
     };
+    pull.setConsumer("consume-cons");
 
     var ctx = pull.consume(
         nats.jetstream.JsMsgHandler.init(
@@ -1731,8 +1731,8 @@ pub fn testAckPreventsRedeliver(
     var pull = nats.jetstream.PullSubscription{
         .js = &js,
         .stream = "TEST_ACK",
-        .consumer = "ack-cons",
     };
+    pull.setConsumer("ack-cons");
 
     // Fetch and ACK
     var msg = (pull.next(5000) catch {
@@ -1839,8 +1839,8 @@ pub fn testNakCausesRedeliver(
     var pull = nats.jetstream.PullSubscription{
         .js = &js,
         .stream = "TEST_NAK",
-        .consumer = "nak-cons",
     };
+    pull.setConsumer("nak-cons");
 
     // Fetch and NAK
     var msg1 = (pull.next(5000) catch {
@@ -1974,8 +1974,8 @@ pub fn testTermStopsRedeliver(
     var pull = nats.jetstream.PullSubscription{
         .js = &js,
         .stream = "TEST_TERM",
-        .consumer = "term-cons",
     };
+    pull.setConsumer("term-cons");
 
     // Fetch and TERM
     var msg = (pull.next(5000) catch {
@@ -2094,8 +2094,8 @@ pub fn testBatchFetch(
     var pull = nats.jetstream.PullSubscription{
         .js = &js,
         .stream = "TEST_BATCH",
-        .consumer = "batch-cons",
     };
+    pull.setConsumer("batch-cons");
 
     // Fetch batch of 5
     var r1 = pull.fetch(.{
@@ -2681,8 +2681,8 @@ pub fn testInProgress(
     var pull = nats.jetstream.PullSubscription{
         .js = &js,
         .stream = "TEST_WPI",
-        .consumer = "wpi-cons",
     };
+    pull.setConsumer("wpi-cons");
 
     var msg = (pull.next(5000) catch {
         reportResult("js_wpi", false, "fetch");
@@ -3243,7 +3243,7 @@ pub fn testKvDelete(
     };
 
     // Delete
-    kv.delete("delkey") catch {
+    _ = kv.delete("delkey") catch {
         reportResult("kv_delete", false, "delete");
         return;
     };
@@ -3773,8 +3773,8 @@ pub fn testFilteredConsumer(
     var pull = nats.jetstream.PullSubscription{
         .js = &js,
         .stream = "TEST_FILTER",
-        .consumer = "filter-cons",
     };
+    pull.setConsumer("filter-cons");
 
     // Should only get "msg-a" (filtered)
     var msg = (pull.next(5000) catch {

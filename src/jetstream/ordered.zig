@@ -95,6 +95,7 @@ pub const OrderedConsumer = struct {
                 if (err == error.Timeout or
                     err == error.NoResponders)
                 {
+                    self.deleteConsumer();
                     self.pull = null;
                     return null;
                 }
@@ -186,11 +187,12 @@ pub const OrderedConsumer = struct {
         // Ensure server has processed the consumer
         self.js.client.flush(5_000_000_000) catch {};
 
-        self.pull = PullSubscription{
+        var p = PullSubscription{
             .js = self.js,
             .stream = self.stream,
-            .consumer = self.consumerName(),
         };
+        p.setConsumer(self.consumerName());
+        self.pull = p;
 
         self.reset_count += 1;
     }

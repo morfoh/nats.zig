@@ -85,7 +85,8 @@ inline fn drainPublishRing(client: *Client) bool {
                     };
                     client.publish_ring.advance();
                 }
-                // Flush once after draining all entries
+                // REVIEWED(2025-03): flush catch {} is intentional.
+                // Next write detects failure and triggers reconnect.
                 client.active_writer.flush() catch {};
                 if (client.use_tls) {
                     client.writer.interface.flush() catch {};
@@ -327,7 +328,9 @@ inline fn pollForData(
 
     // Single load, combined checks (avoid 3 separate loads)
     const revents = fds[0].revents;
-    // POLLHUP/POLLERR means connection is dead - even if POLLIN is also set
+    // REVIEWED(2025-03): POLLHUP prioritized over POLLIN intentionally.
+    // Dead connection detection is more important than draining
+    // partial data; reconnect recovers cleanly.
     if ((revents & (posix.POLL.HUP | posix.POLL.ERR)) != 0)
         return .disconnected;
 
@@ -620,11 +623,16 @@ inline fn routeMessageToSub(
         dbg.print("routeMsg: PUSH FAILED (slow consumer) sid={d}", .{args.sid});
         sub.dropped_msgs += 1;
         slab.free(buf);
+        // REVIEWED(2025-03): Single notification is intentional.
+        // Avoids flooding event queue during slow consumer.
+        // Users monitor sub.dropped_msgs for ongoing counts.
         if (sub.dropped_msgs == 1) {
             client.pushEvent(.{ .slow_consumer = .{ .sid = args.sid } });
         }
         return;
     };
+    // REVIEWED(2025-03): Non-atomic stats are safe here.
+    // io_task is the sole writer; user reads after drain.
     dbg.print("routeMsg: pushed to queue, sid={d}", .{args.sid});
     sub.received_msgs += 1;
 }
@@ -842,12 +850,21 @@ fn handleServerError(client: *Client, msg: []const u8) bool {
         @memcpy(client.last_error_msg[0..len], msg);
         client.last_error_msg_len = len;
     } else {
-        // Truncate if message too long
-        @memcpy(&client.last_error_msg, msg[0..256]);
+        // Truncate to fit u8 length field
+        @memcpy(
+            client.last_error_msg[0..255],
+            msg[0..255],
+        );
         client.last_error_msg_len = 255;
     }
 
-    client.pushEvent(.{ .err = .{ .err = err_type, .msg = msg } });
+    // Use already-copied last_error_msg to avoid
+    // dangling pointer into recycled parser buffer
+    const safe_msg = if (client.last_error_msg_len > 0)
+        client.last_error_msg[0..client.last_error_msg_len]
+    else
+        null;
+    client.pushEvent(.{ .err = .{ .err = err_type, .msg = safe_msg } });
 
     // Fatal errors trigger disconnect/reconnect
     return err_type == events.Error.AuthorizationViolation or

@@ -586,7 +586,7 @@ pub fn publish(
     return self.publishRetry(subject, payload, null);
 }
 
-fn publishRetry(
+pub fn publishRetry(
     self: *JetStream,
     subject: []const u8,
     payload: []const u8,

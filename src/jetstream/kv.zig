@@ -153,6 +153,18 @@ pub const KeyValue = struct {
             return null;
         const seq = msg.seq;
 
+        // Validate subject matches expected key
+        if (msg.subject) |subj| {
+            var exp_buf: [256]u8 = undefined;
+            const expected = std.fmt.bufPrint(
+                &exp_buf,
+                "$KV.{s}.{s}",
+                .{ self.bucket(), key },
+            ) catch return errors.Error.SubjectTooLong;
+            if (!std.mem.eql(u8, subj, expected))
+                return null;
+        }
+
         // Determine operation from stored headers
         var op: types.KeyValueOp = .put;
         if (msg.hdrs) |hdr_b64| {
@@ -171,17 +183,32 @@ pub const KeyValue = struct {
             op = parseKvOp(decoded);
         }
 
-        // Data is base64-encoded — dupe to survive
-        // arena free from resp.deinit()
+        // Data is base64-encoded in JSON response —
+        // decode before returning to caller
         const allocator = self.js.allocator;
         var val: []const u8 = "";
         var val_alloc: ?Allocator = null;
         if (msg.data) |data_b64| {
             if (data_b64.len > 0 and op == .put) {
-                val = try allocator.dupe(
+                // Decode base64 into allocated buffer
+                const decoder = std.base64.standard
+                    .Decoder;
+                const dec_len = decoder
+                    .calcSizeForSlice(data_b64) catch {
+                    return error.InvalidData;
+                };
+                const decoded_val = try allocator.alloc(
                     u8,
-                    data_b64,
+                    dec_len,
                 );
+                decoder.decode(
+                    decoded_val[0..dec_len],
+                    data_b64,
+                ) catch {
+                    allocator.free(decoded_val);
+                    return error.InvalidData;
+                };
+                val = decoded_val[0..dec_len];
                 val_alloc = allocator;
             }
         }
@@ -269,37 +296,46 @@ pub const KeyValue = struct {
     // -- Delete / Purge --
 
     /// Soft-deletes a key by publishing a delete marker.
-    /// The key can still appear in history.
-    pub fn delete(self: *KeyValue, key: []const u8) !void {
+    /// Returns the revision number. The key can still
+    /// appear in history.
+    pub fn delete(
+        self: *KeyValue,
+        key: []const u8,
+    ) !u64 {
         std.debug.assert(key.len > 0);
         var subj_buf: [256]u8 = undefined;
         const subj = try self.kvSubject(
             key,
             &subj_buf,
         );
-        const hdrs = [_]headers_mod.Entry{
+        const hdrs = [_]nats.protocol.headers.Entry{
             .{
                 .key = "KV-Operation",
                 .value = "DEL",
             },
         };
-        try self.js.client.publishWithHeaders(
+        var resp = try self.js.publishRetry(
             subj,
-            &hdrs,
             "",
+            &hdrs,
         );
-        try self.js.client.flush(5_000_000_000);
+        defer resp.deinit();
+        return resp.value.seq;
     }
 
     /// Purges a key and all its history.
-    pub fn purge(self: *KeyValue, key: []const u8) !void {
+    /// Returns the revision number.
+    pub fn purge(
+        self: *KeyValue,
+        key: []const u8,
+    ) !u64 {
         std.debug.assert(key.len > 0);
         var subj_buf: [256]u8 = undefined;
         const subj = try self.kvSubject(
             key,
             &subj_buf,
         );
-        const hdrs = [_]headers_mod.Entry{
+        const hdrs = [_]nats.protocol.headers.Entry{
             .{
                 .key = "KV-Operation",
                 .value = "PURGE",
@@ -309,12 +345,13 @@ pub const KeyValue = struct {
                 .value = "sub",
             },
         };
-        try self.js.client.publishWithHeaders(
+        var resp = try self.js.publishRetry(
             subj,
-            &hdrs,
             "",
+            &hdrs,
         );
-        try self.js.client.flush(5_000_000_000);
+        defer resp.deinit();
+        return resp.value.seq;
     }
 
     // -- Keys --
@@ -461,19 +498,13 @@ pub const KeyValue = struct {
             &subj_buf,
         );
 
-        var pull = try self.createEphemeralPull(
+        const pull = try self.createEphemeralPull(
             filter,
             .last_per_subject,
             null,
         );
 
-        var w = KvWatcher{ .kv = self, .pull = undefined };
-        const nm = self.ephName();
-        @memcpy(w._name_buf[0..nm.len], nm);
-        w._name_len = @intCast(nm.len);
-        pull.consumer = w._name_buf[0..nm.len];
-        w.pull = pull;
-        return w;
+        return KvWatcher{ .kv = self, .pull = pull };
     }
 
     /// Watches all keys in the bucket. Delivers
@@ -486,19 +517,13 @@ pub const KeyValue = struct {
             .{self.bucket()},
         ) catch return errors.Error.SubjectTooLong;
 
-        var pull = try self.createEphemeralPull(
+        const pull = try self.createEphemeralPull(
             filter,
             .last_per_subject,
             null,
         );
 
-        var w = KvWatcher{ .kv = self, .pull = undefined };
-        const nm = self.ephName();
-        @memcpy(w._name_buf[0..nm.len], nm);
-        w._name_len = @intCast(nm.len);
-        pull.consumer = w._name_buf[0..nm.len];
-        w.pull = pull;
-        return w;
+        return KvWatcher{ .kv = self, .pull = pull };
     }
 
     /// Creates an ephemeral consumer with the given
@@ -536,11 +561,12 @@ pub const KeyValue = struct {
         );
         resp.deinit();
 
-        return PullSubscription{
+        var pull = PullSubscription{
             .js = self.js,
             .stream = self.streamName(),
-            .consumer = self.ephName(),
         };
+        pull.setConsumer(name);
+        return pull;
     }
 
     fn ephName(self: *const KeyValue) []const u8 {
@@ -554,7 +580,7 @@ pub const KeyValue = struct {
     ) void {
         var resp = self.js.deleteConsumer(
             self.streamName(),
-            pull.consumer,
+            pull.consumerName(),
         ) catch return;
         resp.deinit();
     }
@@ -571,24 +597,22 @@ pub const KeyValue = struct {
     // -- Helpers --
 
     fn isDeleteOp(raw_headers: []const u8) bool {
-        // Quick check without full parse
-        return std.mem.indexOf(
-            u8,
-            raw_headers,
-            "KV-Operation",
-        ) != null;
+        const op = parseKvOp(raw_headers);
+        return op == .delete or op == .purge;
     }
 
+    /// Matches exact KV-Operation header values to
+    /// avoid substring false positives.
     fn parseKvOp(raw_headers: []const u8) types.KeyValueOp {
         if (std.mem.indexOf(
             u8,
             raw_headers,
-            "PURGE",
+            "KV-Operation: PURGE\r\n",
         ) != null) return .purge;
         if (std.mem.indexOf(
             u8,
             raw_headers,
-            "DEL",
+            "KV-Operation: DEL\r\n",
         ) != null) return .delete;
         return .put;
     }
@@ -618,10 +642,6 @@ pub const KvWatcher = struct {
     kv: *KeyValue,
     pull: PullSubscription,
     initial_done: bool = false,
-    // Stable storage for consumer name (separate from
-    // KeyValue's buffer to avoid conflicts)
-    _name_buf: [48]u8 = undefined,
-    _name_len: u8 = 0,
 
     /// Returns the next entry update. Returns null
     /// when no more updates within timeout. First
