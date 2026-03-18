@@ -117,12 +117,11 @@ pub const PullSubscription = struct {
         const client = self.js.client;
         const allocator = self.js.allocator;
 
-        var sub = try client.subscribeSync(
-            "_INBOX_JS.>",
-        );
-        defer sub.deinit();
+        const inbox = try client.newInbox();
+        defer allocator.free(inbox);
 
-        const inbox = sub.subject;
+        var sub = try client.subscribeSync(inbox);
+        defer sub.deinit();
 
         var subj_buf: [512]u8 = undefined;
         const prefix = self.js.apiPrefix();
@@ -213,9 +212,10 @@ pub const PullSubscription = struct {
         );
 
         const client = self.js.client;
-        const sub = try client.subscribeSync(
-            "_INBOX_JS.>",
-        );
+        const inbox = try client.newInbox();
+        defer client.allocator.free(inbox);
+
+        const sub = try client.subscribeSync(inbox);
 
         return MessagesContext{
             .pull = self,
@@ -248,9 +248,10 @@ pub const PullSubscription = struct {
         );
 
         const client = self.js.client;
-        const sub = try client.subscribeSync(
-            "_INBOX_JS.>",
-        );
+        const inbox = try client.newInbox();
+        defer client.allocator.free(inbox);
+
+        const sub = try client.subscribeSync(inbox);
         errdefer sub.deinit();
 
         // Issue initial pull request
@@ -364,6 +365,16 @@ pub const MessagesContext = struct {
             if (self.hb) |*hb| hb.recordActivity();
 
             if (msg.status()) |code| {
+                if (code == 100) {
+                    if (msg.reply_to) |reply| {
+                        client.publish(
+                            reply,
+                            "",
+                        ) catch {};
+                    }
+                    msg.deinit();
+                    continue;
+                }
                 msg.deinit();
                 switch (code) {
                     404, 408 => {
@@ -373,15 +384,6 @@ pub const MessagesContext = struct {
                     409 => {
                         self.batch_pending = false;
                         return null;
-                    },
-                    100 => {
-                        if (msg.reply_to) |reply| {
-                            client.publish(
-                                reply,
-                                "",
-                            ) catch {};
-                        }
-                        continue;
                     },
                     else => {
                         self.batch_pending = false;
@@ -547,6 +549,16 @@ fn consumeDrainTask(
         if (hb) |*h| h.recordActivity();
 
         if (msg.status()) |code| {
+            if (code == 100) {
+                if (msg.reply_to) |reply| {
+                    client.publish(
+                        reply,
+                        "",
+                    ) catch {};
+                }
+                msg.deinit();
+                continue;
+            }
             msg.deinit();
             switch (code) {
                 404, 408 => {
@@ -554,15 +566,6 @@ fn consumeDrainTask(
                     continue;
                 },
                 409 => break,
-                100 => {
-                    if (msg.reply_to) |reply| {
-                        client.publish(
-                            reply,
-                            "",
-                        ) catch {};
-                    }
-                    continue;
-                },
                 else => continue,
             }
         }

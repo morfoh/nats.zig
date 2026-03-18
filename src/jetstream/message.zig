@@ -79,6 +79,8 @@ pub const JsMsg = struct {
     ) !void {
         std.debug.assert(!self.acked);
         std.debug.assert(reason.len > 0);
+        // "+TERM " = 6 overhead, 512 - 6 = 506 max
+        std.debug.assert(reason.len <= 506);
         const reply = self.msg.reply_to orelse
             return;
         std.debug.assert(reply.len > 0);

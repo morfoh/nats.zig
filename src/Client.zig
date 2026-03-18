@@ -2079,22 +2079,6 @@ pub fn flush(
     }
 }
 
-/// Helper: Wait for PONG by polling atomic, yielding to event loop.
-fn waitForPongHelper(self: *Client, old_pong_ns: u64) !void {
-    var iteration: u32 = 0;
-    while (true) {
-        const current = self.last_pong_received_ns.load(.acquire);
-        if (current > old_pong_ns) return; // PONG received!
-
-        iteration += 1;
-        if (iteration >= 100) {
-            iteration = 0;
-            std.Thread.yield() catch {};
-        }
-        std.atomic.spinLoopHint();
-    }
-}
-
 /// Forces an immediate reconnection attempt.
 /// Closes the current connection and triggers reconnection logic.
 /// Subscriptions will be restored automatically.

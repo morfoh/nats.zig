@@ -57,6 +57,9 @@ pub fn init(client: *Client, opts: Options) JetStream {
         .timeout_ms = opts.timeout_ms,
     };
     if (opts.domain) |d| {
+        std.debug.assert(d.len > 0);
+        // "$JS." + domain + ".API." = 9 overhead
+        std.debug.assert(d.len <= 119);
         var buf: [128]u8 = undefined;
         const p = std.fmt.bufPrint(
             &buf,

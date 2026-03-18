@@ -704,6 +704,7 @@ inline fn routeHMessageToSub(
         if (sub.dropped_msgs == 1) {
             client.pushEvent(.{ .slow_consumer = .{ .sid = args.sid } });
         }
+        return;
     };
     sub.received_msgs += 1;
 }
@@ -829,7 +830,7 @@ fn handleServerError(client: *Client, msg: []const u8) bool {
 
     // Store as last_error for retrieval via getLastError()
     client.last_error = err_type;
-    if (msg.len <= 256) {
+    if (msg.len < 256) {
         const len: u8 = @intCast(msg.len);
         @memcpy(client.last_error_msg[0..len], msg);
         client.last_error_msg_len = len;

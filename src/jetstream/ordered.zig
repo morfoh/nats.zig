@@ -77,60 +77,61 @@ pub const OrderedConsumer = struct {
     ) !?JsMsg {
         std.debug.assert(timeout_ms > 0);
 
-        // Ensure consumer exists
-        if (self.pull == null) {
-            try self.createOrReset();
-        }
-
-        const recv_ms = if (self.hb) |hb|
-            hb.timeoutMs()
-        else
-            timeout_ms;
-
-        var pull = &self.pull.?;
-        const maybe = pull.next(recv_ms) catch |err| {
-            // On error, try reset
-            if (err == error.Timeout or
-                err == error.NoResponders)
-            {
-                self.pull = null;
-                return null;
-            }
-            return err;
-        };
-
-        const msg = maybe orelse {
-            // Timeout -- check heartbeat
-            if (self.hb) |*hb| {
-                if (hb.recordTimeout()) {
-                    try self.createOrReset();
-                }
-            }
-            return null;
-        };
-
-        // Reset heartbeat on any message
-        if (self.hb) |*hb| hb.recordActivity();
-
-        // Check for sequence gap
-        const md = msg.metadata();
-        if (md) |m| {
-            const expected = self.consumer_seq + 1;
-            if (expected > 1 and
-                m.consumer_seq != expected)
-            {
-                // Gap detected -- reset
-                var m2 = msg;
-                m2.deinit();
-                self.stream_seq = m.stream_seq;
+        while (true) {
+            // Ensure consumer exists
+            if (self.pull == null) {
                 try self.createOrReset();
-                return self.next(timeout_ms);
             }
-            self.stream_seq = m.stream_seq;
-            self.consumer_seq = m.consumer_seq;
-        }
 
-        return msg;
+            const recv_ms = if (self.hb) |hb|
+                hb.timeoutMs()
+            else
+                timeout_ms;
+
+            var pull = &self.pull.?;
+            const maybe = pull.next(
+                recv_ms,
+            ) catch |err| {
+                if (err == error.Timeout or
+                    err == error.NoResponders)
+                {
+                    self.pull = null;
+                    return null;
+                }
+                return err;
+            };
+
+            const msg = maybe orelse {
+                if (self.hb) |*hb| {
+                    if (hb.recordTimeout()) {
+                        try self.createOrReset();
+                    }
+                }
+                return null;
+            };
+
+            if (self.hb) |*hb| hb.recordActivity();
+
+            // Check for sequence gap
+            const md = msg.metadata();
+            if (md) |m| {
+                const expected = self.consumer_seq + 1;
+                if (expected > 1 and
+                    m.consumer_seq != expected)
+                {
+                    // Gap -- reset and retry
+                    var m2 = msg;
+                    m2.deinit();
+                    self.stream_seq = m.stream_seq;
+                    try self.createOrReset();
+                    continue;
+                }
+                self.stream_seq = m.stream_seq;
+                self.consumer_seq = m.consumer_seq;
+            }
+
+            return msg;
+        }
     }
 
     /// Creates or recreates the server-side consumer,
