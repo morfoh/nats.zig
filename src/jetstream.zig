@@ -16,6 +16,8 @@ pub const MsgMetadata = message.MsgMetadata;
 const pull_mod = @import("jetstream/pull.zig");
 pub const PullSubscription = pull_mod.PullSubscription;
 pub const MessagesContext = pull_mod.MessagesContext;
+const ordered_mod = @import("jetstream/ordered.zig");
+pub const OrderedConsumer = ordered_mod.OrderedConsumer;
 
 // Consumer abstractions
 pub const JsMsgHandler = consumer.JsMsgHandler;
