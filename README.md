@@ -1,3 +1,5 @@
+![Zig](https://img.shields.io/badge/Zig-0.16.0--dev.2905-orange)
+
 <p align="center">
   <img src="logo/logo.png">
 </p>
@@ -6,13 +8,11 @@
     A <a href="https://www.ziglang.org/">Zig</a> client for the <a href="https://nats.io">NATS messaging system</a>.
 </p>
 
-![Zig](https://img.shields.io/badge/Zig-0.16.0--dev.2905-orange)
-
 # nats.zig
 
 A [Zig](https://ziglang.org/) client for the [NATS messaging system](https://nats.io).
 
-Native Zig. Built on `std.Io`.
+Built on `std.Io`.
 
 > **Work in Progress** - This library is under active development.
 > Core pub/sub, TLS, JetStream, and Key-Value store are implemented
