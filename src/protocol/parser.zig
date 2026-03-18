@@ -21,7 +21,7 @@ pub inline fn parseU64Fast(s: []const u8) error{
     Overflow,
 }!u64 {
     assert(s.len > 0);
-    if (s.len > 20) return error.Overflow;
+    if (s.len >= 20) return error.Overflow;
     var v: u64 = 0;
     for (s) |c| {
         if (c < '0' or c > '9') return error.InvalidCharacter;
@@ -37,7 +37,7 @@ pub inline fn parseUsizeFast(s: []const u8) error{
     Overflow,
 }!usize {
     assert(s.len > 0);
-    if (s.len > 20) return error.Overflow;
+    if (s.len >= 20) return error.Overflow;
     var v: usize = 0;
     for (s) |c| {
         if (c < '0' or c > '9') return error.InvalidCharacter;

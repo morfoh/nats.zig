@@ -170,7 +170,8 @@ pub fn testSubjectExactLimit(allocator: std.mem.Allocator) void {
     };
     defer client.deinit();
 
-    const max_len = defaults.Limits.max_subject_len;
+    // max_subject_len is exclusive (>= rejects it)
+    const max_len = defaults.Limits.max_subject_len - 1;
     var subject_max: [max_len]u8 = undefined;
     @memset(&subject_max, 'a');
 

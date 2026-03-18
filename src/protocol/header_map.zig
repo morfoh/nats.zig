@@ -54,8 +54,11 @@ pub const HeaderMap = struct {
         self: *HeaderMap,
         key: []const u8,
         value: []const u8,
-    ) Allocator.Error!void {
+    ) error{ InvalidHeader, OutOfMemory }!void {
         assert(key.len > 0);
+        if (containsControlChars(key) or
+            containsControlChars(value))
+            return error.InvalidHeader;
 
         // Remove existing values for this key
         self.deleteInternal(key);
@@ -77,8 +80,11 @@ pub const HeaderMap = struct {
         self: *HeaderMap,
         key: []const u8,
         value: []const u8,
-    ) Allocator.Error!void {
+    ) error{ InvalidHeader, OutOfMemory }!void {
         assert(key.len > 0);
+        if (containsControlChars(key) or
+            containsControlChars(value))
+            return error.InvalidHeader;
 
         const owned_key = try self.allocator.dupe(u8, key);
         errdefer self.allocator.free(owned_key);
@@ -88,6 +94,15 @@ pub const HeaderMap = struct {
 
         try self.keys.append(self.allocator, owned_key);
         try self.values.append(self.allocator, owned_value);
+    }
+
+    /// Checks for control characters that could
+    /// enable header injection.
+    fn containsControlChars(s: []const u8) bool {
+        for (s) |c| {
+            if (c < 0x20) return true;
+        }
+        return false;
     }
 
     /// Gets the first value for a header (case-insensitive lookup).

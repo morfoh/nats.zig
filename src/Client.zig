@@ -1098,6 +1098,11 @@ fn upgradeTls(
     assert(self.tls_client == null);
     assert(self.tls_host_len > 0);
 
+    // mTLS not yet implemented
+    if (opts.tls_cert_file != null or
+        opts.tls_key_file != null)
+        return error.MtlsNotImplemented;
+
     // Allocate TLS buffers if not already done
     if (self.tls_read_buffer == null) {
         self.tls_read_buffer =
@@ -1139,9 +1144,8 @@ fn upgradeTls(
 
     // Generate entropy for TLS handshake
     var entropy: [tls.Client.Options.entropy_len]u8 = undefined;
-    self.io.randomSecure(&entropy) catch {
-        self.io.random(&entropy);
-    };
+    self.io.randomSecure(&entropy) catch
+        return error.SecureEntropyUnavailable;
 
     // Get current timestamp for certificate validation
     const now = Io.Clock.real.now(self.io);
@@ -1252,8 +1256,10 @@ fn handshake(
     var pubkey_slice: ?[]const u8 = null;
     // Buffer for credentials file (must outlive signing operation)
     var creds_buf: [8192]u8 = undefined;
+    defer std.crypto.secureZero(u8, &creds_buf);
     // Buffer for seed from file (must outlive signing operation)
     var file_seed_buf: [128]u8 = undefined;
+    defer std.crypto.secureZero(u8, &file_seed_buf);
     // JWT to send (may come from opts.jwt or parsed credentials)
     var jwt_to_send: ?[]const u8 = opts.jwt;
 
@@ -1478,14 +1484,14 @@ pub fn queueSubscribeSync(
     queue_group: ?[]const u8,
 ) !*Sub {
     const allocator = self.allocator;
-    if (!self.state.canSend()) {
+    if (!State.atomicLoad(&self.state).canSend()) {
         return error.NotConnected;
     }
     try pubsub.validateSubscribe(subject);
     if (queue_group) |qg| try pubsub.validateQueueGroup(qg);
 
     // Validate lengths for backup buffer compatibility
-    if (subject.len > defaults.Limits.max_subject_len)
+    if (subject.len >= defaults.Limits.max_subject_len)
         return error.SubjectTooLong;
 
     if (queue_group) |qg| {
@@ -1667,7 +1673,7 @@ pub fn publish(
     payload: []const u8,
 ) !void {
     assert(subject.len > 0);
-    if (!self.state.canSend()) {
+    if (!State.atomicLoad(&self.state).canSend()) {
         return error.NotConnected;
     }
     try pubsub.validatePublish(subject);
@@ -1701,7 +1707,7 @@ pub fn publishRequest(
 ) !void {
     assert(subject.len > 0);
     assert(reply_to.len > 0);
-    if (!self.state.canSend()) {
+    if (!State.atomicLoad(&self.state).canSend()) {
         return error.NotConnected;
     }
     try pubsub.validatePublish(subject);
@@ -1736,7 +1742,7 @@ pub fn publishWithHeaders(
 ) !void {
     assert(subject.len > 0);
     assert(hdrs.len > 0);
-    if (!self.state.canSend()) return error.NotConnected;
+    if (!State.atomicLoad(&self.state).canSend()) return error.NotConnected;
     try pubsub.validatePublish(subject);
 
     const hdr_size = headers.encodedSize(hdrs);
@@ -1773,7 +1779,7 @@ pub fn publishRequestWithHeaders(
     assert(subject.len > 0);
     assert(reply_to.len > 0);
     assert(hdrs.len > 0);
-    if (!self.state.canSend()) return error.NotConnected;
+    if (!State.atomicLoad(&self.state).canSend()) return error.NotConnected;
     try pubsub.validatePublish(subject);
     try pubsub.validateReplyTo(reply_to);
 
@@ -1809,7 +1815,7 @@ pub fn publishWithHeaderMap(
 ) !void {
     assert(subject.len > 0);
     if (header_map.isEmpty()) return error.EmptyHeaders;
-    if (!self.state.canSend()) return error.NotConnected;
+    if (!State.atomicLoad(&self.state).canSend()) return error.NotConnected;
     try pubsub.validatePublish(subject);
 
     const hdr_bytes = try header_map.encode();
@@ -1843,7 +1849,7 @@ pub fn publishMsg(
     msg: *const Message,
 ) !void {
     assert(msg.subject.len > 0);
-    if (!self.state.canSend()) return error.NotConnected;
+    if (!State.atomicLoad(&self.state).canSend()) return error.NotConnected;
     try pubsub.validatePublish(msg.subject);
 
     const total_size = if (msg.headers) |h|
@@ -1901,7 +1907,7 @@ pub fn requestWithHeaders(
     assert(subject.len > 0);
     assert(hdrs.len > 0);
     assert(timeout_ms > 0);
-    if (!self.state.canSend()) {
+    if (!State.atomicLoad(&self.state).canSend()) {
         return error.NotConnected;
     }
 
@@ -1975,7 +1981,7 @@ pub fn requestWithHeaders(
 /// This is a fast flush that does not wait for server confirmation.
 /// For confirmed delivery, use flush() which sends PING and waits for PONG.
 pub fn flushBuffer(self: *Client) !void {
-    if (!self.state.canSend()) {
+    if (!State.atomicLoad(&self.state).canSend()) {
         return error.NotConnected;
     }
 
@@ -2006,7 +2012,7 @@ pub fn flush(
     timeout_ns: u64,
 ) !void {
     assert(timeout_ns > 0);
-    if (!self.state.canSend()) return error.NotConnected;
+    if (!State.atomicLoad(&self.state).canSend()) return error.NotConnected;
 
     // Step 1: Drain publish ring + flush + send PING (holding mutex)
     try self.write_mutex.lock(self.io);
@@ -2158,7 +2164,7 @@ pub fn request(
     const allocator = self.allocator;
     assert(subject.len > 0);
     assert(timeout_ms > 0);
-    if (!self.state.canSend()) {
+    if (!State.atomicLoad(&self.state).canSend()) {
         return error.NotConnected;
     }
 
@@ -2240,7 +2246,7 @@ pub fn requestMsg(
     const allocator = self.allocator;
     assert(msg.subject.len > 0);
     assert(timeout_ms > 0);
-    if (!self.state.canSend()) return error.NotConnected;
+    if (!State.atomicLoad(&self.state).canSend()) return error.NotConnected;
 
     // Generate unique inbox for reply
     const inbox = try self.newInbox();
@@ -2858,7 +2864,7 @@ pub fn numSubscriptions(self: *const Client) usize {
 /// Returns RTT in nanoseconds.
 /// This is a blocking operation that waits for the server to respond.
 pub fn rtt(self: *Client) !u64 {
-    if (!self.state.canSend()) return error.NotConnected;
+    if (!State.atomicLoad(&self.state).canSend()) return error.NotConnected;
     assert(self.next_sid >= 1);
 
     // Record start time
@@ -2963,7 +2969,7 @@ pub inline fn getSubscriptionBySid(self: *Client, sid: u64) ?*Sub {
 
 /// Sends PONG response.
 fn sendPong(self: *Client) !void {
-    assert(self.state.canSend());
+    assert(State.atomicLoad(&self.state).canSend());
     const writer = self.active_writer;
     writer.writeAll("PONG\r\n") catch {
         return error.WriteFailed;
@@ -3169,7 +3175,7 @@ pub fn backupSubscriptions(self: *Client) error{SubjectTooLong}!void {
             if (self.sub_backup_count >= MAX_SUBSCRIPTIONS) break;
 
             // Validate lengths - reject truncation
-            if (sub.subject.len > defaults.Limits.max_subject_len) {
+            if (sub.subject.len >= defaults.Limits.max_subject_len) {
                 self.pushEvent(.{
                     .err = .{
                         .err = events_mod.Error.SubjectTooLong,
@@ -3580,10 +3586,15 @@ fn cleanupForReconnect(self: *Client) void {
     self.write_mutex.lock(self.io) catch {
         self.stream.close(self.io);
         self.tls_client = null;
+        self.active_reader = &self.reader.interface;
+        self.active_writer = &self.writer.interface;
         return;
     };
     self.stream.close(self.io);
     self.tls_client = null;
+    // Reset to raw TCP to avoid dangling TLS pointers
+    self.active_reader = &self.reader.interface;
+    self.active_writer = &self.writer.interface;
     self.write_mutex.unlock(self.io);
 }
 
@@ -4115,7 +4126,7 @@ pub const Subscription = struct {
 
         // Send UNSUB with max_msgs to server (server tracks count too)
         const client = self.client;
-        if (client.state.canSend()) {
+        if (State.atomicLoad(&client.state).canSend()) {
             try client.write_mutex.lock(client.io);
             defer client.write_mutex.unlock(client.io);
 
@@ -4140,7 +4151,7 @@ pub const Subscription = struct {
 
         // Send UNSUB to stop new messages (no max_msgs = immediate unsub)
         const client = self.client;
-        if (client.state.canSend()) {
+        if (State.atomicLoad(&client.state).canSend()) {
             try client.write_mutex.lock(client.io);
             defer client.write_mutex.unlock(client.io);
 
@@ -4412,7 +4423,7 @@ pub const Subscription = struct {
         }
 
         const client = self.client;
-        const can_send = client.state.canSend();
+        const can_send = State.atomicLoad(&client.state).canSend();
 
         // sub_mutex serializes with subscribe for
         // sidmap/sub_ptrs/free_slots safety.
@@ -4431,7 +4442,7 @@ pub const Subscription = struct {
         if (can_send) {
             // Acquire write mutex for thread-safe buffer access
             client.write_mutex.lockUncancelable(client.io);
-            const writer = &client.writer.interface;
+            const writer = client.active_writer;
             protocol.Encoder.encodeUnsub(writer, .{
                 .sid = self.sid,
                 .max_msgs = null,

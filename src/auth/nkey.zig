@@ -95,6 +95,10 @@ pub const KeyPair = struct {
 
         // Base32 decode the seed
         var raw: [64]u8 = undefined;
+        defer std.crypto.secureZero(
+            u8,
+            @volatileCast(&raw),
+        );
         const decoded = base32.decode(&raw, encoded_seed) catch {
             return error.InvalidSeed;
         };
@@ -133,9 +137,6 @@ pub const KeyPair = struct {
         const kp = Ed25519.KeyPair.generateDeterministic(seed) catch {
             return error.IdentityElement;
         };
-
-        // Securely wipe decoded buffer
-        std.crypto.secureZero(u8, @volatileCast(&raw));
 
         return .{ .kp = kp, .key_type = key_type };
     }

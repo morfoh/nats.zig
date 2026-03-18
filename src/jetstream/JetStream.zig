@@ -340,7 +340,10 @@ pub fn allStreamNames(
             break;
         for (names) |n| {
             const owned = try allocator.dupe(u8, n);
-            try result.append(allocator, owned);
+            result.append(allocator, owned) catch |e| {
+                allocator.free(owned);
+                return e;
+            };
         }
         offset += names.len;
         if (offset >= resp.value.total) break;

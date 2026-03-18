@@ -241,12 +241,15 @@ test "parseU64Fast overflow protection" {
         error.Overflow,
         parseU64Fast("123456789012345678901"),
     );
-    // 20 digits at max value edge
-    _ = try parseU64Fast("18446744073709551615");
-    // 20 zeros (equals 0)
-    try std.testing.expectEqual(
-        @as(u64, 0),
-        try parseU64Fast("00000000000000000000"),
+    // 20 digits now rejected (overflow guard)
+    try std.testing.expectError(
+        error.Overflow,
+        parseU64Fast("18446744073709551615"),
+    );
+    // 20 zeros also rejected
+    try std.testing.expectError(
+        error.Overflow,
+        parseU64Fast("00000000000000000000"),
     );
 }
 
@@ -256,8 +259,11 @@ test "parseUsizeFast overflow protection" {
         error.Overflow,
         parseUsizeFast("123456789012345678901"),
     );
-    // 20 digits at max value
-    _ = try parseUsizeFast("18446744073709551615");
+    // 20 digits now rejected (overflow guard)
+    try std.testing.expectError(
+        error.Overflow,
+        parseUsizeFast("18446744073709551615"),
+    );
 }
 
 test "parse MSG with SID=0 rejected" {
@@ -284,17 +290,20 @@ test "parse HMSG with SID=0 rejected" {
 
 // Section 2: Integer Parsing Edge Cases (parseU64Fast / parseUsizeFast)
 
-test "parseU64Fast u64 max value" {
-    // u64 max = 18446744073709551615 (exactly 20 digits)
-    const result = try parseU64Fast("18446744073709551615");
-    try std.testing.expectEqual(std.math.maxInt(u64), result);
+test "parseU64Fast u64 max value rejected" {
+    // u64 max = 18446744073709551615 (20 digits, now rejected)
+    try std.testing.expectError(
+        error.Overflow,
+        parseU64Fast("18446744073709551615"),
+    );
 }
 
-test "parseU64Fast u64 max plus one wraps" {
-    // 18446744073709551616 wraps to 0 due to wrapping arithmetic
-    // This is accepted because it's 20 digits (passes length check)
-    const result = try parseU64Fast("18446744073709551616");
-    try std.testing.expectEqual(@as(u64, 0), result);
+test "parseU64Fast u64 max plus one rejected" {
+    // 20 digits rejected by guard
+    try std.testing.expectError(
+        error.Overflow,
+        parseU64Fast("18446744073709551616"),
+    );
 }
 
 test "parseU64Fast 19 digit large value" {
@@ -309,11 +318,11 @@ test "parseU64Fast leading zeros preserved value" {
     try std.testing.expectEqual(@as(u64, 0), try parseU64Fast("0000000000000000000"));
 }
 
-test "parseU64Fast 20 leading zeros" {
-    // Exactly 20 zeros = 0
-    try std.testing.expectEqual(
-        @as(u64, 0),
-        try parseU64Fast("00000000000000000000"),
+test "parseU64Fast 20 chars overflow" {
+    // 20+ chars always rejected (prevents wrapping)
+    try std.testing.expectError(
+        error.Overflow,
+        parseU64Fast("00000000000000000000"),
     );
 }
 
@@ -374,10 +383,19 @@ test "parseU64Fast minus in middle" {
 }
 
 test "parseU64Fast exactly 20 chars boundary" {
-    // All valid 20-digit numbers
-    _ = try parseU64Fast("10000000000000000000");
-    _ = try parseU64Fast("12345678901234567890");
-    _ = try parseU64Fast("99999999999999999999");
+    // 20-char numbers now rejected (overflow guard)
+    try std.testing.expectError(
+        error.Overflow,
+        parseU64Fast("10000000000000000000"),
+    );
+    try std.testing.expectError(
+        error.Overflow,
+        parseU64Fast("12345678901234567890"),
+    );
+    try std.testing.expectError(
+        error.Overflow,
+        parseU64Fast("99999999999999999999"),
+    );
 }
 
 test "parseU64Fast exactly 21 chars overflow" {
@@ -399,10 +417,19 @@ test "parseU64Fast single digit all values" {
 }
 
 test "parseUsizeFast boundaries" {
-    // Test platform-dependent boundaries
-    _ = try parseUsizeFast("18446744073709551615");
-    try std.testing.expectEqual(@as(usize, 0), try parseUsizeFast("0"));
-    try std.testing.expectEqual(@as(usize, 1), try parseUsizeFast("1"));
+    // 20-char numbers now rejected (overflow guard)
+    try std.testing.expectError(
+        error.Overflow,
+        parseUsizeFast("18446744073709551615"),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        try parseUsizeFast("0"),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        try parseUsizeFast("1"),
+    );
 }
 
 test "parseU64Fast special ASCII near digits" {

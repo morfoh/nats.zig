@@ -253,6 +253,16 @@ pub const KeyValueEntry = struct {
     value: []const u8,
     revision: u64,
     operation: KeyValueOp,
+    /// Allocator used for owned value (null = not owned).
+    value_allocator: ?std.mem.Allocator = null,
+
+    /// Frees the owned value if allocated.
+    pub fn deinit(self: *KeyValueEntry) void {
+        if (self.value_allocator) |a| {
+            if (self.value.len > 0) a.free(self.value);
+            self.value_allocator = null;
+        }
+    }
 };
 
 // -- Stream MSG.GET types --

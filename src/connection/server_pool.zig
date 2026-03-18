@@ -50,7 +50,7 @@ pub const ServerPool = struct {
     pub fn init(primary_url: []const u8) error{InvalidUrl}!ServerPool {
         var pool: ServerPool = .{};
 
-        if (primary_url.len == 0 or primary_url.len > MAX_URL_LEN) {
+        if (primary_url.len == 0 or primary_url.len >= MAX_URL_LEN) {
             return error.InvalidUrl;
         }
 
@@ -64,7 +64,7 @@ pub const ServerPool = struct {
     /// Add a server to the pool. Returns false if pool is full or URL invalid.
     pub fn addServer(self: *ServerPool, url: []const u8) !void {
         if (self.count >= MAX_SERVERS) return error.PoolFull;
-        if (url.len == 0 or url.len > MAX_URL_LEN) return error.InvalidUrl;
+        if (url.len == 0 or url.len >= MAX_URL_LEN) return error.InvalidUrl;
 
         for (self.servers[0..self.count]) |*existing| {
             if (std.mem.eql(u8, existing.getUrl(), url)) {
@@ -94,7 +94,36 @@ pub const ServerPool = struct {
             server.host_start += @intCast(at_pos + 1);
         }
 
-        if (std.mem.indexOf(u8, remaining, ":")) |colon_pos| {
+        if (remaining.len > 0 and remaining[0] == '[') {
+            // IPv6 literal: [::1]:port
+            if (std.mem.indexOf(
+                u8,
+                remaining,
+                "]",
+            )) |bracket_end| {
+                server.host_start += 1; // skip '['
+                server.host_len = @intCast(
+                    bracket_end - 1,
+                );
+                const after = remaining[bracket_end + 1 ..];
+                if (after.len > 1 and after[0] == ':') {
+                    server.port = std.fmt.parseInt(
+                        u16,
+                        after[1..],
+                        10,
+                    ) catch 4222;
+                }
+            } else {
+                // Malformed IPv6 — treat as host
+                server.host_len = @intCast(
+                    remaining.len,
+                );
+            }
+        } else if (std.mem.indexOf(
+            u8,
+            remaining,
+            ":",
+        )) |colon_pos| {
             server.host_len = @intCast(colon_pos);
             server.port = std.fmt.parseInt(
                 u16,

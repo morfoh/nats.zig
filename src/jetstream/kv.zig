@@ -171,13 +171,18 @@ pub const KeyValue = struct {
             op = parseKvOp(decoded);
         }
 
-        // Data is base64-encoded
+        // Data is base64-encoded — dupe to survive
+        // arena free from resp.deinit()
+        const allocator = self.js.allocator;
         var val: []const u8 = "";
+        var val_alloc: ?Allocator = null;
         if (msg.data) |data_b64| {
             if (data_b64.len > 0 and op == .put) {
-                // We return the base64 value as-is
-                // since it's in the parsed arena
-                val = data_b64;
+                val = try allocator.dupe(
+                    u8,
+                    data_b64,
+                );
+                val_alloc = allocator;
             }
         }
 
@@ -187,6 +192,7 @@ pub const KeyValue = struct {
             .value = val,
             .revision = seq,
             .operation = op,
+            .value_allocator = val_alloc,
         };
     }
 
@@ -344,8 +350,7 @@ pub const KeyValue = struct {
         }
 
         while (true) {
-            var msg = (pull.next(3000) catch break)
-                orelse break;
+            var msg = (pull.next(3000) catch break) orelse break;
             defer msg.deinit();
 
             const subj = msg.subject();
@@ -397,8 +402,7 @@ pub const KeyValue = struct {
         errdefer result.deinit(allocator);
 
         while (true) {
-            var msg = (pull.next(3000) catch break)
-                orelse break;
+            var msg = (pull.next(3000) catch break) orelse break;
 
             var op: types.KeyValueOp = .put;
             if (msg.headers()) |h| {
@@ -411,13 +415,29 @@ pub const KeyValue = struct {
             else
                 0;
 
-            try result.append(allocator, .{
+            // Extract value before deinit frees msg
+            const data = msg.data();
+            var val: []const u8 = "";
+            var val_alloc: ?Allocator = null;
+            if (data.len > 0 and op == .put) {
+                val = allocator.dupe(
+                    u8,
+                    data,
+                ) catch break;
+                val_alloc = allocator;
+            }
+
+            result.append(allocator, .{
                 .bucket = self.bucket(),
                 .key = key,
-                .value = "",
+                .value = val,
                 .revision = seq,
                 .operation = op,
-            });
+                .value_allocator = val_alloc,
+            }) catch {
+                if (val_alloc) |a| a.free(val);
+                break;
+            };
 
             msg.deinit();
         }
@@ -641,12 +661,23 @@ pub const KvWatcher = struct {
         else
             0;
 
+        // Extract value before deinit frees msg
+        const allocator = self.kv.js.allocator;
+        const data = msg.data();
+        var val: []const u8 = "";
+        var val_alloc: ?Allocator = null;
+        if (data.len > 0 and op == .put) {
+            val = try allocator.dupe(u8, data);
+            val_alloc = allocator;
+        }
+
         return types.KeyValueEntry{
             .bucket = self.kv.bucket(),
             .key = key,
-            .value = "",
+            .value = val,
             .revision = seq,
             .operation = op,
+            .value_allocator = val_alloc,
         };
     }
 

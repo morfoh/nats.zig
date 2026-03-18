@@ -795,11 +795,18 @@ fn calculateReconnectDelay(client: *Client, attempt: u32) u32 {
     // Apply jitter: delay +/- jitter_pct%
     if (jitter_pct == 0) return capped_delay;
 
-    // Simple jitter using attempt number as pseudo-random seed
-    // Deterministic jitter using attempt as seed
     const jitter_range = (capped_delay * jitter_pct) / 100;
-    const jitter_offset = (attempt * 7) % (jitter_range * 2 + 1);
-    const jitter: i64 = @as(i64, jitter_offset) - @as(i64, jitter_range);
+    if (jitter_range == 0) return capped_delay;
+    var rand_buf: [4]u8 = undefined;
+    client.io.random(&rand_buf);
+    const rand_val = std.mem.readInt(
+        u32,
+        &rand_buf,
+        .little,
+    );
+    const jitter_offset = rand_val % (jitter_range * 2 + 1);
+    const jitter: i64 = @as(i64, jitter_offset) -
+        @as(i64, jitter_range);
 
     const final_delay: i64 = @as(i64, capped_delay) + jitter;
     return @intCast(@max(final_delay, 1));
