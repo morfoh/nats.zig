@@ -75,6 +75,11 @@ pub const Error = error{
     ApiError,
     JsonParseError,
     SubjectTooLong,
+    NoHeartbeat,
+    ConsumerDeleted,
+    OrderedReset,
+    KeyNotFound,
+    WrongLastRevision,
 };
 
 test "ApiError.fromJson" {

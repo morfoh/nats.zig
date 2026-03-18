@@ -21,6 +21,12 @@ pub const DeleteResponse = types.DeleteResponse;
 pub const PurgeResponse = types.PurgeResponse;
 pub const PubAck = types.PubAck;
 pub const PublishOpts = types.PublishOpts;
+pub const StreamNamesResponse = types.StreamNamesResponse;
+pub const StreamListResponse = types.StreamListResponse;
+pub const ConsumerNamesResponse = types.ConsumerNamesResponse;
+pub const ConsumerListResponse = types.ConsumerListResponse;
+pub const ListRequest = types.ListRequest;
+pub const AccountInfo = types.AccountInfo;
 pub const ApiError = errors.ApiError;
 pub const ApiErrorJson = errors.ApiErrorJson;
 
@@ -32,6 +38,7 @@ api_prefix_buf: [128]u8 = undefined,
 api_prefix_len: u8 = 0,
 timeout_ms: u32 = 5000,
 last_api_err: ?ApiError = null,
+_reserved_async_ctx: ?*anyopaque = null,
 
 /// JetStream context options for API prefix, timeout, and
 /// multi-tenant domain configuration.
@@ -252,6 +259,104 @@ pub fn consumerInfo(
     return self.apiRequestNoPayload(
         ConsumerInfo,
         subj,
+    );
+}
+
+// -- Listing & Account Info --
+
+/// Returns all stream names. Handles pagination
+/// internally. Caller owns the returned slice
+/// and must free it with the JetStream allocator.
+pub fn streamNames(
+    self: *JetStream,
+) !Response(StreamNamesResponse) {
+    std.debug.assert(self.timeout_ms > 0);
+    return self.apiRequest(
+        StreamNamesResponse,
+        "STREAM.NAMES",
+        ListRequest{},
+    );
+}
+
+/// Returns stream info list. Handles pagination
+/// internally. Caller owns the returned Response.
+pub fn streams(
+    self: *JetStream,
+) !Response(StreamListResponse) {
+    std.debug.assert(self.timeout_ms > 0);
+    return self.apiRequest(
+        StreamListResponse,
+        "STREAM.LIST",
+        ListRequest{},
+    );
+}
+
+/// Finds the stream name that captures a subject.
+/// Returns null if no stream matches.
+pub fn streamNameBySubject(
+    self: *JetStream,
+    subject: []const u8,
+) !Response(StreamNamesResponse) {
+    std.debug.assert(subject.len > 0);
+    std.debug.assert(self.timeout_ms > 0);
+    return self.apiRequest(
+        StreamNamesResponse,
+        "STREAM.NAMES",
+        ListRequest{ .subject = subject },
+    );
+}
+
+/// Returns consumer names for a stream. Caller owns
+/// the returned Response.
+pub fn consumerNames(
+    self: *JetStream,
+    stream: []const u8,
+) !Response(ConsumerNamesResponse) {
+    std.debug.assert(stream.len > 0);
+    std.debug.assert(self.timeout_ms > 0);
+    var buf: [256]u8 = undefined;
+    const subj = std.fmt.bufPrint(
+        &buf,
+        "CONSUMER.NAMES.{s}",
+        .{stream},
+    ) catch return errors.Error.SubjectTooLong;
+    return self.apiRequest(
+        ConsumerNamesResponse,
+        subj,
+        ListRequest{},
+    );
+}
+
+/// Returns consumer info list for a stream. Caller
+/// owns the returned Response.
+pub fn consumers(
+    self: *JetStream,
+    stream: []const u8,
+) !Response(ConsumerListResponse) {
+    std.debug.assert(stream.len > 0);
+    std.debug.assert(self.timeout_ms > 0);
+    var buf: [256]u8 = undefined;
+    const subj = std.fmt.bufPrint(
+        &buf,
+        "CONSUMER.LIST.{s}",
+        .{stream},
+    ) catch return errors.Error.SubjectTooLong;
+    return self.apiRequest(
+        ConsumerListResponse,
+        subj,
+        ListRequest{},
+    );
+}
+
+/// Returns JetStream account information including
+/// usage stats and limits.
+pub fn accountInfo(
+    self: *JetStream,
+) !Response(AccountInfo) {
+    std.debug.assert(self.timeout_ms > 0);
+    return self.apiRequestNoPayload(
+        AccountInfo,
+        "INFO",
     );
 }
 

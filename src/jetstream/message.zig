@@ -112,8 +112,160 @@ pub const JsMsg = struct {
         return self.msg.reply_to;
     }
 
+    /// Parses JetStream metadata from the reply subject.
+    /// Returns null if the reply subject is missing or
+    /// not in the expected `$JS.ACK.*` format.
+    /// Returned slices point into the reply subject
+    /// string (owned by the underlying Message).
+    pub fn metadata(
+        self: *const JsMsg,
+    ) ?MsgMetadata {
+        const reply = self.msg.reply_to orelse
+            return null;
+        std.debug.assert(reply.len > 0);
+        return parseMsgMetadata(reply);
+    }
+
     /// Frees the underlying message.
     pub fn deinit(self: *JsMsg) void {
         self.msg.deinit();
     }
 };
+
+/// Metadata parsed from a JetStream message reply subject.
+/// Format: `$JS.ACK.<stream>.<consumer>.<nDel>.<sSeq>
+///          .<cSeq>.<timestamp>.<nPending>`
+/// With domain: `$JS.<domain>.ACK.<stream>.<consumer>
+///              .<nDel>.<sSeq>.<cSeq>.<timestamp>.<nPending>`
+pub const MsgMetadata = struct {
+    stream: []const u8,
+    consumer: []const u8,
+    num_delivered: u64,
+    stream_seq: u64,
+    consumer_seq: u64,
+    timestamp: i64,
+    num_pending: u64,
+    domain: ?[]const u8,
+};
+
+/// Parses JetStream metadata from a reply subject string.
+/// Returns null if the format is invalid.
+fn parseMsgMetadata(
+    reply: []const u8,
+) ?MsgMetadata {
+    std.debug.assert(reply.len > 0);
+    var it = std.mem.splitScalar(u8, reply, '.');
+
+    // Token 0: must be "$JS"
+    const t0 = it.next() orelse return null;
+    if (!std.mem.eql(u8, t0, "$JS")) return null;
+
+    // Token 1: "ACK" or domain name
+    const t1 = it.next() orelse return null;
+
+    var domain: ?[]const u8 = null;
+    if (!std.mem.eql(u8, t1, "ACK")) {
+        domain = t1;
+        const ack_tok = it.next() orelse return null;
+        if (!std.mem.eql(u8, ack_tok, "ACK"))
+            return null;
+    }
+
+    const stream = it.next() orelse return null;
+    const consumer = it.next() orelse return null;
+    const n_del = it.next() orelse return null;
+    const s_seq = it.next() orelse return null;
+    const c_seq = it.next() orelse return null;
+    const ts = it.next() orelse return null;
+    const n_pend = it.next() orelse return null;
+
+    return MsgMetadata{
+        .stream = stream,
+        .consumer = consumer,
+        .num_delivered = parseU64(n_del) orelse
+            return null,
+        .stream_seq = parseU64(s_seq) orelse
+            return null,
+        .consumer_seq = parseU64(c_seq) orelse
+            return null,
+        .timestamp = parseI64(ts) orelse return null,
+        .num_pending = parseU64(n_pend) orelse
+            return null,
+        .domain = domain,
+    };
+}
+
+fn parseU64(s: []const u8) ?u64 {
+    return std.fmt.parseInt(u64, s, 10) catch null;
+}
+
+fn parseI64(s: []const u8) ?i64 {
+    return std.fmt.parseInt(i64, s, 10) catch null;
+}
+
+// -- Tests --
+
+test "parse standard reply subject" {
+    const reply =
+        "$JS.ACK.ORDERS.worker.1.42.42.1710000000.5";
+    const md = parseMsgMetadata(reply).?;
+    try std.testing.expectEqualStrings(
+        "ORDERS",
+        md.stream,
+    );
+    try std.testing.expectEqualStrings(
+        "worker",
+        md.consumer,
+    );
+    try std.testing.expectEqual(@as(u64, 1), md.num_delivered);
+    try std.testing.expectEqual(@as(u64, 42), md.stream_seq);
+    try std.testing.expectEqual(@as(u64, 42), md.consumer_seq);
+    try std.testing.expectEqual(
+        @as(i64, 1710000000),
+        md.timestamp,
+    );
+    try std.testing.expectEqual(@as(u64, 5), md.num_pending);
+    try std.testing.expect(md.domain == null);
+}
+
+test "parse reply with domain" {
+    const reply =
+        "$JS.hub.ACK.ORDERS.worker.1.42.42.1710000000.5";
+    const md = parseMsgMetadata(reply).?;
+    try std.testing.expectEqualStrings("hub", md.domain.?);
+    try std.testing.expectEqualStrings(
+        "ORDERS",
+        md.stream,
+    );
+    try std.testing.expectEqualStrings(
+        "worker",
+        md.consumer,
+    );
+    try std.testing.expectEqual(@as(u64, 42), md.stream_seq);
+}
+
+test "invalid reply returns null" {
+    try std.testing.expect(
+        parseMsgMetadata("_INBOX.abc.def") == null,
+    );
+    try std.testing.expect(
+        parseMsgMetadata("$JS.ACK.STREAM") == null,
+    );
+    try std.testing.expect(
+        parseMsgMetadata("$JS.ACK") == null,
+    );
+    try std.testing.expect(
+        parseMsgMetadata("NATS.something") == null,
+    );
+}
+
+test "edge cases: zero values" {
+    const reply =
+        "$JS.ACK.S.C.0.0.0.0.0";
+    const md = parseMsgMetadata(reply).?;
+    try std.testing.expectEqual(@as(u64, 0), md.stream_seq);
+    try std.testing.expectEqual(@as(u64, 0), md.consumer_seq);
+    try std.testing.expectEqual(@as(u64, 0), md.num_pending);
+    try std.testing.expectEqual(@as(u64, 0), md.num_delivered);
+    try std.testing.expectEqual(@as(i64, 0), md.timestamp);
+}

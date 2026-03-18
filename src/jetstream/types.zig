@@ -101,6 +101,11 @@ pub const ConsumerConfig = struct {
     inactive_threshold: ?i64 = null,
     num_replicas: ?i32 = null,
     headers_only: ?bool = null,
+    // Push consumer fields (v1.1 ready, harmless as null)
+    deliver_subject: ?[]const u8 = null,
+    deliver_group: ?[]const u8 = null,
+    flow_control: ?bool = null,
+    idle_heartbeat: ?i64 = null,
 };
 
 pub const SequenceInfo = struct {
@@ -156,6 +161,7 @@ pub const PullRequest = struct {
     expires: ?i64 = null,
     no_wait: ?bool = null,
     max_bytes: ?i64 = null,
+    idle_heartbeat: ?i64 = null,
 };
 
 // -- Delete response --
@@ -173,6 +179,76 @@ pub const PurgeResponse = struct {
     @"error": ?ApiErrorJson = null,
     success: bool = false,
     purged: u64 = 0,
+};
+
+// -- Listing responses (paginated) --
+
+pub const StreamNamesResponse = struct {
+    type: ?[]const u8 = null,
+    @"error": ?ApiErrorJson = null,
+    total: u64 = 0,
+    offset: u64 = 0,
+    limit: u64 = 0,
+    streams: ?[]const []const u8 = null,
+};
+
+pub const StreamListResponse = struct {
+    type: ?[]const u8 = null,
+    @"error": ?ApiErrorJson = null,
+    total: u64 = 0,
+    offset: u64 = 0,
+    limit: u64 = 0,
+    streams: ?[]const StreamInfo = null,
+};
+
+pub const ConsumerNamesResponse = struct {
+    type: ?[]const u8 = null,
+    @"error": ?ApiErrorJson = null,
+    total: u64 = 0,
+    offset: u64 = 0,
+    limit: u64 = 0,
+    consumers: ?[]const []const u8 = null,
+};
+
+pub const ConsumerListResponse = struct {
+    type: ?[]const u8 = null,
+    @"error": ?ApiErrorJson = null,
+    total: u64 = 0,
+    offset: u64 = 0,
+    limit: u64 = 0,
+    consumers: ?[]const ConsumerInfo = null,
+};
+
+/// Request body for paginated listing APIs.
+pub const ListRequest = struct {
+    offset: u64 = 0,
+    subject: ?[]const u8 = null,
+};
+
+// -- Account info --
+
+pub const AccountInfo = struct {
+    type: ?[]const u8 = null,
+    @"error": ?ApiErrorJson = null,
+    memory: u64 = 0,
+    storage: u64 = 0,
+    streams: u64 = 0,
+    consumers: u64 = 0,
+    limits: ?AccountLimits = null,
+    api: ?APIStats = null,
+    domain: ?[]const u8 = null,
+};
+
+pub const AccountLimits = struct {
+    max_memory: i64 = 0,
+    max_storage: i64 = 0,
+    max_streams: i64 = 0,
+    max_consumers: i64 = 0,
+};
+
+pub const APIStats = struct {
+    total: u64 = 0,
+    errors: u64 = 0,
 };
 
 // -- Generic response wrapper --
@@ -326,5 +402,89 @@ test "null optional fields omitted in JSON" {
     // Should contain "name"
     try std.testing.expect(
         std.mem.indexOf(u8, json, "name") != null,
+    );
+}
+
+test "StreamNamesResponse JSON round-trip" {
+    const alloc = std.testing.allocator;
+    const json =
+        \\{"total":3,"offset":0,"limit":1024,
+        \\"streams":["S1","S2","S3"]}
+    ;
+    var parsed = try jsonParse(
+        StreamNamesResponse,
+        alloc,
+        json,
+    );
+    defer parsed.deinit();
+
+    const v = parsed.value;
+    try std.testing.expectEqual(@as(u64, 3), v.total);
+    try std.testing.expectEqual(@as(u64, 0), v.offset);
+    try std.testing.expect(v.streams != null);
+    try std.testing.expectEqual(
+        @as(usize, 3),
+        v.streams.?.len,
+    );
+    try std.testing.expectEqualStrings(
+        "S1",
+        v.streams.?[0],
+    );
+}
+
+test "AccountInfo JSON round-trip" {
+    const alloc = std.testing.allocator;
+    const json =
+        \\{"memory":1024,"storage":4096,"streams":2,
+        \\"consumers":5,"limits":{"max_memory":-1,
+        \\"max_storage":-1,"max_streams":-1,
+        \\"max_consumers":-1},"api":{"total":42,
+        \\"errors":1}}
+    ;
+    var parsed = try jsonParse(AccountInfo, alloc, json);
+    defer parsed.deinit();
+
+    const v = parsed.value;
+    try std.testing.expectEqual(@as(u64, 1024), v.memory);
+    try std.testing.expectEqual(@as(u64, 4096), v.storage);
+    try std.testing.expectEqual(@as(u64, 2), v.streams);
+    try std.testing.expectEqual(@as(u64, 5), v.consumers);
+    try std.testing.expect(v.limits != null);
+    try std.testing.expect(v.api != null);
+    try std.testing.expectEqual(
+        @as(u64, 42),
+        v.api.?.total,
+    );
+}
+
+test "ConsumerConfig with push fields serializes" {
+    const alloc = std.testing.allocator;
+    const config = ConsumerConfig{
+        .name = "push-test",
+        .deliver_subject = "deliver.test",
+        .deliver_group = "grp",
+    };
+
+    const json = try jsonStringify(alloc, config);
+    defer alloc.free(json);
+
+    try std.testing.expect(
+        std.mem.indexOf(u8, json, "deliver_subject") !=
+            null,
+    );
+    try std.testing.expect(
+        std.mem.indexOf(u8, json, "deliver_group") !=
+            null,
+    );
+
+    var parsed = try jsonParse(
+        ConsumerConfig,
+        alloc,
+        json,
+    );
+    defer parsed.deinit();
+    try std.testing.expectEqualStrings(
+        "deliver.test",
+        parsed.value.deliver_subject.?,
     );
 }
