@@ -408,7 +408,10 @@ pub const KeyValue = struct {
                     u8,
                     k,
                 );
-                try result.append(allocator, owned);
+                result.append(allocator, owned) catch |e| {
+                    allocator.free(owned);
+                    return e;
+                };
             }
         }
 
@@ -446,6 +449,7 @@ pub const KeyValue = struct {
 
         while (true) {
             var msg = (pull.next(3000) catch break) orelse break;
+            defer msg.deinit();
 
             var op: types.KeyValueOp = .put;
             if (msg.headers()) |h| {
@@ -458,18 +462,15 @@ pub const KeyValue = struct {
             else
                 0;
 
-            // Extract value before deinit frees msg
+            // Extract value before defer deinit frees msg
             const data = msg.data();
             var val: []const u8 = "";
             var val_alloc: ?Allocator = null;
-            // REVIEWED(2025-03): On dupe failure, break
-            // exits loop; msg.deinit() called after loop.
-            // errdefer cleans result list. No leak.
             if (data.len > 0 and op == .put) {
-                val = allocator.dupe(
+                val = try allocator.dupe(
                     u8,
                     data,
-                ) catch break;
+                );
                 val_alloc = allocator;
             }
 
@@ -484,8 +485,6 @@ pub const KeyValue = struct {
                 if (val_alloc) |a| a.free(val);
                 break;
             };
-
-            msg.deinit();
         }
 
         return result.toOwnedSlice(allocator);

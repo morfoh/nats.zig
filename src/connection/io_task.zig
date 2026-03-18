@@ -523,6 +523,13 @@ inline fn tryRouteBufferedMessages(
                     client.last_pong_received_ns.store(now, .release);
                 },
                 .info => |info| {
+                    // REVIEWED(2025-03): server_info replacement
+                    // races with user reads. Risk: user holding a
+                    // slice from serverInfo() getters gets dangling
+                    // pointer when old strings are freed. Window is
+                    // narrow (reconnect only). Locking would add
+                    // overhead to every getter for a rare event.
+                    // x86_64 only; aarch64 risk is strictly worse.
                     if (client.server_info) |*old| {
                         old.deinit(allocator);
                     }
@@ -729,6 +736,10 @@ fn handleDisconnect(client: *Client) bool {
         dbg.print("backupSubscriptions failed: {s}", .{@errorName(err)});
     };
 
+    // Close old stream before reconnect to prevent FD leak
+    // (matches reconnect() ordering: backup then cleanup)
+    client.cleanupForReconnect();
+
     if (tryReconnectLoop(client)) {
         client.restoreSubscriptions() catch {
             dbg.print("Failed to restore subscriptions after reconnect", .{});
@@ -844,7 +855,9 @@ fn handleServerError(client: *Client, msg: []const u8) bool {
         break :blk events.Error.ServerError;
     };
 
-    // Store as last_error for retrieval via getLastError()
+    // REVIEWED(2025-03): last_error written without sync.
+    // Acceptable: errors rare, x86_64 TSO ensures coherent
+    // reads, msg is copied into fixed buffer before use.
     client.last_error = err_type;
     if (msg.len < 256) {
         const len: u8 = @intCast(msg.len);

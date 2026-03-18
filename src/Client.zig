@@ -601,7 +601,8 @@ protocol_errors: u64 = 0,
 /// msgs_in value when protocol_error event was last pushed (rate-limit).
 last_parse_error_notified_at: u64 = 0,
 
-// Last async error tracking (written by io_task only)
+// Last async error tracking (written by io_task,
+// cleared by user via clearLastError)
 /// Last async error that occurred on the connection.
 last_error: ?anyerror = null,
 /// Message associated with last error (inline buffer, no allocation).
@@ -3571,8 +3572,8 @@ fn flushPendingBuffer(self: *Client) !void {
 
 /// Cleanup client state for reconnection.
 /// Closes old stream but preserves subscriptions and pending buffer.
-fn cleanupForReconnect(self: *Client) void {
-    dbg.stateChange("connected", "reconnecting");
+pub fn cleanupForReconnect(self: *Client) void {
+    dbg.stateChange("cleanup", "for_reconnect");
 
     // Wait for in-flight main-thread writes.
     // State is already .disconnected -- no new

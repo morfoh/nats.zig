@@ -63,7 +63,7 @@ pub const ByteRing = struct {
         data_len: usize,
     ) ?[]u8 {
         const total = entrySize(data_len);
-        assert(total <= self.capacity / 2);
+        if (total > self.capacity / 2) return null;
 
         const head = self.head.load(.monotonic);
         const tail = self.tail.load(.acquire);
