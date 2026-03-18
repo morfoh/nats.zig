@@ -11,8 +11,9 @@ A [Zig](https://ziglang.org/) client for the [NATS messaging system](https://nat
 Native Zig. Built on `std.Io`.
 
 > **Work in Progress** - This library is under active development.
-> Core pub/sub and TLS are implemented and functional. JetStream, KV store,
-> and other advanced features are still being built. The API may change.
+> Core pub/sub, TLS, JetStream, and Key-Value store are implemented
+> and functional. Object store and push consumers are planned. The
+> API may change.
 
 ## Requirements
 
@@ -782,7 +783,7 @@ all through a JSON request/reply API on `$JS.API.*` subjects.
 For the full guide with Go comparisons, see
 [docs/JetStream.md](docs/JetStream.md).
 
-### Quick Example
+### Quick Example -- JetStream
 
 ```zig
 const nats = @import("nats");
@@ -804,7 +805,7 @@ var ack = try js.publish("orders.new", "order-1");
 defer ack.deinit();
 // ack.value.seq, ack.value.stream
 
-// Create a pull consumer
+// Create a pull consumer and fetch messages
 var cons = try js.createConsumer("ORDERS", .{
     .name = "processor",
     .durable_name = "processor",
@@ -812,7 +813,6 @@ var cons = try js.createConsumer("ORDERS", .{
 });
 defer cons.deinit();
 
-// Fetch messages
 var pull = js_mod.PullSubscription{
     .js = &js,
     .stream = "ORDERS",
@@ -829,25 +829,103 @@ for (result.messages) |*msg| {
 }
 ```
 
-### What's Included (Tier 1)
+### Quick Example -- Key-Value Store
 
+```zig
+const js_mod = nats.jetstream;
+
+var js = js_mod.JetStream.init(client, .{});
+
+// Create a KV bucket
+var kv = try js.createKeyValue(.{
+    .bucket = "config",
+    .storage = .memory,
+    .history = 5,
+});
+
+// Put and get
+const rev = try kv.put("db.host", "localhost:5432");
+const entry = try kv.get("db.host");
+// entry.?.revision == rev, entry.?.operation == .put
+
+// Optimistic concurrency
+const rev2 = try kv.update("db.host", "newhost:5432", rev);
+
+// Create only if key doesn't exist
+_ = try kv.create("db.port", "5432");
+_ = kv.create("db.port", "9999") catch |err| {
+    // err == error.ApiError (key exists)
+};
+
+// List all keys
+const keys = try kv.keys(allocator);
+defer {
+    for (keys) |k| allocator.free(k);
+    allocator.free(keys);
+}
+
+// Watch for real-time updates
+var watcher = try kv.watchAll();
+defer watcher.deinit();
+while (try watcher.next(5000)) |update| {
+    // update.key, update.revision, update.operation
+}
+```
+
+### What's Included
+
+**Stream & Consumer Management:**
 - **Stream CRUD** -- create, update, delete, info, purge
+  (with subject filter)
 - **Consumer CRUD** -- create, update, delete, info
+- **Listing** -- streamNames, streams, consumerNames,
+  consumers, accountInfo (with pagination)
+
+**Publishing:**
 - **JetStream publish** -- with ack confirmation, dedup
   headers (`Nats-Msg-Id`), optimistic concurrency
   (`Nats-Expected-Last-Sequence`)
-- **Pull subscribe** -- batch fetch with timeout, handles
-  404/408/409 status codes
-- **Message ack protocol** -- ack, nak, nak with delay,
-  in-progress, term, term with reason
-- **Error handling** -- Zig error unions + `lastApiError()`
-  for server-side JetStream error codes
-- **Domain support** -- multi-tenant via `domain` option
+- **Retry on NoResponders** -- 2 retries with 250ms backoff
+  for transient leadership changes
+
+**Pull Consumers:**
+- **Batch fetch** -- `fetch()`, `fetchNoWait()`,
+  `fetchBytes()`, `next()` (single message)
+- **Messages iterator** -- `messages()` for continuous
+  pull with auto-replenish
+- **Consume callback** -- `consume(handler)` with
+  background task, stop/drain control
+- **Heartbeat monitoring** -- idle heartbeat detection,
+  auto-configured for requests > 10s
+- **Ordered consumer** -- gap-free delivery with
+  auto-recreate on sequence gaps
+
+**Message Ack Protocol:**
+- ack, nak, nak with delay, in-progress, term,
+  term with reason
+- Metadata parsing from reply subject (stream/consumer
+  seq, timestamp, pending count)
+
+**Key-Value Store:**
+- **Bucket management** -- createKeyValue, keyValue
+  (bind), deleteKeyValue
+- **CRUD** -- get, put, create (if-not-exists), update
+  (optimistic concurrency by revision)
+- **Delete/Purge** -- soft delete (marker), purge (remove
+  history)
+- **Keys & History** -- list all keys, revision history
+  per key
+- **Watch** -- real-time updates via `watch()` /
+  `watchAll()` with last-per-subject delivery
+
+**Error Handling:**
+- Zig error unions + `lastApiError()` for server-side
+  JetStream error codes
+- Domain support -- multi-tenant via `domain` option
 
 ### Not Yet Implemented
 
-Heartbeat-based idle detection, flow control, ordered consumers,
-Key-Value store, Object store.
+Object store, push consumers, async publish.
 
 ---
 
@@ -1608,21 +1686,48 @@ if (client.connectedServerVersion()) |version| {
 | Update stream | `js.updateStream(config)` | `!Response(StreamInfo)` |
 | Stream info | `js.streamInfo(name)` | `!Response(StreamInfo)` |
 | Purge stream | `js.purgeStream(name)` | `!Response(PurgeResponse)` |
+| Purge subject | `js.purgeStreamSubject(name, subject)` | `!Response(PurgeResponse)` |
 | Delete stream | `js.deleteStream(name)` | `!Response(DeleteResponse)` |
+| Stream names | `js.streamNames()` | `!Response(StreamNamesResponse)` |
+| All stream names | `js.allStreamNames(allocator)` | `![][]const u8` |
+| Stream list | `js.streams()` | `!Response(StreamListResponse)` |
+| Account info | `js.accountInfo()` | `!Response(AccountInfo)` |
 | Create consumer | `js.createConsumer(stream, config)` | `!Response(ConsumerInfo)` |
 | Update consumer | `js.updateConsumer(stream, config)` | `!Response(ConsumerInfo)` |
 | Consumer info | `js.consumerInfo(stream, consumer)` | `!Response(ConsumerInfo)` |
 | Delete consumer | `js.deleteConsumer(stream, consumer)` | `!Response(DeleteResponse)` |
+| Consumer names | `js.consumerNames(stream)` | `!Response(ConsumerNamesResponse)` |
 | JS publish | `js.publish(subject, payload)` | `!Response(PubAck)` |
 | JS publish + opts | `js.publishWithOpts(subject, payload, opts)` | `!Response(PubAck)` |
 | Last API error | `js.lastApiError()` | `?ApiError` |
 | Fetch messages | `pull.fetch(opts)` | `!FetchResult` |
+| Fetch no wait | `pull.fetchNoWait(max)` | `!FetchResult` |
+| Next (single msg) | `pull.next(timeout_ms)` | `!?JsMsg` |
+| Messages iterator | `pull.messages(opts)` | `!MessagesContext` |
+| Consume callback | `pull.consume(handler, opts)` | `!ConsumeContext` |
+| Message metadata | `msg.metadata()` | `?MsgMetadata` |
 | Ack message | `msg.ack()` | `!void` |
 | Nak message | `msg.nak()` | `!void` |
 | Nak with delay | `msg.nakWithDelay(delay_ns)` | `!void` |
 | In-progress | `msg.inProgress()` | `!void` |
 | Terminate | `msg.term()` | `!void` |
 | Terminate + reason | `msg.termWithReason(reason)` | `!void` |
+| **Key-Value Store** | | |
+| Create KV bucket | `js.createKeyValue(config)` | `!KeyValue` |
+| Bind to bucket | `js.keyValue(bucket)` | `!KeyValue` |
+| Delete bucket | `js.deleteKeyValue(bucket)` | `!Response(DeleteResponse)` |
+| Get value | `kv.get(key)` | `!?KeyValueEntry` |
+| Get revision | `kv.getRevision(key, rev)` | `!?KeyValueEntry` |
+| Put value | `kv.put(key, value)` | `!u64` (revision) |
+| Create (if new) | `kv.create(key, value)` | `!u64` (revision) |
+| Update (CAS) | `kv.update(key, value, rev)` | `!u64` (revision) |
+| Delete key | `kv.delete(key)` | `!void` |
+| Purge key | `kv.purge(key)` | `!void` |
+| List keys | `kv.keys(allocator)` | `![][]const u8` |
+| Key history | `kv.history(allocator, key)` | `![]KeyValueEntry` |
+| Watch pattern | `kv.watch(pattern)` | `!KvWatcher` |
+| Watch all | `kv.watchAll()` | `!KvWatcher` |
+| Bucket status | `kv.status()` | `!Response(StreamInfo)` |
 
 ---
 
@@ -1656,9 +1761,13 @@ zig build fmt
 | NKey Authentication | Implemented |
 | JWT/Credentials | Implemented |
 | TLS | Implemented |
-| JetStream | In Progress |
-| Key-Value | Planned |
+| JetStream Core | Implemented |
+| JetStream Pull Consumers | Implemented |
+| JetStream Ordered Consumer | Implemented |
+| Key-Value Store | Implemented |
 | Object Store | Planned |
+| Push Consumers | Planned |
+| Async Publish | Planned |
 
 ## Related Projects
 
