@@ -124,6 +124,7 @@ pub const ServerPool = struct {
             remaining,
             ":",
         )) |colon_pos| {
+            if (colon_pos > 255) return error.InvalidUrl;
             server.host_len = @intCast(colon_pos);
             server.port = std.fmt.parseInt(
                 u16,
@@ -131,6 +132,8 @@ pub const ServerPool = struct {
                 10,
             ) catch 4222;
         } else {
+            if (remaining.len > 255)
+                return error.InvalidUrl;
             server.host_len = @intCast(remaining.len);
             server.port = 4222;
         }

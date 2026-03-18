@@ -256,6 +256,11 @@ fn parseImpl(allocator: Allocator, data: []const u8) ParseResult {
         const value_len = line_end - value_start;
 
         header_count += 1;
+        // Guard against unbounded header allocation
+        if (header_count > 1024) {
+            result.err = .invalid_header;
+            return result;
+        }
         total_string_bytes += key_len + value_len;
 
         pos = line_end + 2;

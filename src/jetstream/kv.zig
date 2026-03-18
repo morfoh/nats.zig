@@ -498,11 +498,14 @@ pub const KeyValue = struct {
         key_pattern: []const u8,
     ) !KvWatcher {
         std.debug.assert(key_pattern.len > 0);
+        // watch() allows wildcards (*, >) for
+        // pattern matching — skip kvSubject validation
         var subj_buf: [256]u8 = undefined;
-        const filter = try self.kvSubject(
-            key_pattern,
+        const filter = std.fmt.bufPrint(
             &subj_buf,
-        );
+            "$KV.{s}.{s}",
+            .{ self.bucket(), key_pattern },
+        ) catch return errors.Error.SubjectTooLong;
 
         const pull = try self.createEphemeralPull(
             filter,

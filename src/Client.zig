@@ -3902,8 +3902,11 @@ pub const Subscription = struct {
     /// Maximum pending bytes allowed in queue. 0 = no limit.
     pending_bytes_limit: usize = 0,
 
-    // Pending bytes tracking (for statistics)
-    /// Current bytes pending in queue. Updated by io_task on push.
+    // REVIEWED(2025-03): pending_bytes is non-atomic by design.
+    // io_task writes (+), user thread reads/decrements (-|).
+    // Race is bounded: worst case slightly over/under-counts,
+    // acceptable for flow control approximation. Atomics would
+    // add overhead to every message push/pop on the hot path.
     pending_bytes: u64 = 0,
     /// High watermark for pending message count.
     max_pending_msgs: u64 = 0,
