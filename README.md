@@ -1,5 +1,9 @@
 <p align="center">
-  <img src="logo/logo.png" width="300">
+  <img src="logo/logo.png">
+</p>
+
+<p align="center">
+    A <a href="https://www.ziglang.org/">Zig</a> client for the <a href="https://nats.io">NATS messaging system</a>.
 </p>
 
 ![Zig](https://img.shields.io/badge/Zig-0.16.0--dev.2905-orange)
