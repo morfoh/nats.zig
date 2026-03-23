@@ -155,7 +155,7 @@ pub fn main(init: std.process.Init) !void {
         &creds_buf,
         user_jwt,
         user_seed,
-    );
+    ) catch return;
     try stdout.print("{s}\n", .{creds});
 
     try stdout.flush();
