@@ -105,40 +105,50 @@ pub const ErrHandler = *const fn (anyerror) void;
 /// Standalone struct -- NOT coupled to pull or push
 /// specifics. Both modes reuse the same context type.
 pub const ConsumeContext = struct {
-    state: State = .running,
+    _state: std.atomic.Value(State) =
+        std.atomic.Value(State).init(.running),
     _task: ?std.Io.Future(void) = null,
     _io: std.Io = undefined,
+    _thread: ?std.Thread = null,
 
-    pub const State = enum {
-        running,
-        draining,
-        stopped,
+    pub const State = enum(u8) {
+        running = 0,
+        draining = 1,
+        stopped = 2,
     };
+
+    /// Reads the current state atomically.
+    pub fn state(self: *const ConsumeContext) State {
+        return self._state.load(.acquire);
+    }
 
     /// Stops consumption immediately. Buffered messages
     /// that have not been dispatched are discarded.
     pub fn stop(self: *ConsumeContext) void {
-        std.debug.assert(self.state != .stopped);
-        self.state = .stopped;
+        std.debug.assert(self.state() != .stopped);
+        self._state.store(.stopped, .release);
     }
 
     /// Signals the consumer to process remaining buffered
     /// messages and then stop.
     pub fn drain(self: *ConsumeContext) void {
-        std.debug.assert(self.state == .running);
-        self.state = .draining;
+        std.debug.assert(self.state() == .running);
+        self._state.store(.draining, .release);
     }
 
     /// Returns true if consumption has fully stopped.
     pub fn closed(self: *const ConsumeContext) bool {
-        return self.state == .stopped;
+        return self.state() == .stopped;
     }
 
     /// Stops the background task and cleans up. The
     /// background task handles its own sub cleanup.
     pub fn deinit(self: *ConsumeContext) void {
-        self.state = .stopped;
-        if (self._task) |*t| {
+        self._state.store(.stopped, .release);
+        if (self._thread) |t| {
+            t.join();
+            self._thread = null;
+        } else if (self._task) |*t| {
             t.cancel(self._io);
             self._task = null;
         }
@@ -229,22 +239,22 @@ test "ConsumeContext state transitions" {
     try std.testing.expect(!ctx.closed());
     try std.testing.expectEqual(
         ConsumeContext.State.running,
-        ctx.state,
+        ctx.state(),
     );
 
     ctx.drain();
     try std.testing.expectEqual(
         ConsumeContext.State.draining,
-        ctx.state,
+        ctx.state(),
     );
     try std.testing.expect(!ctx.closed());
 
-    ctx.state = .running;
+    ctx._state.store(.running, .release);
     ctx.stop();
     try std.testing.expect(ctx.closed());
     try std.testing.expectEqual(
         ConsumeContext.State.stopped,
-        ctx.state,
+        ctx.state(),
     );
 }
 

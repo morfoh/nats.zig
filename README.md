@@ -15,9 +15,9 @@ A [Zig](https://ziglang.org/) client for the [NATS messaging system](https://nat
 Built on `std.Io`.
 
 > **Work in Progress** - This library is under active development.
-> Core pub/sub, TLS, JetStream, and Key-Value store are implemented
-> and functional. Object store and push consumers are planned. The
-> API may change.
+> Core pub/sub, TLS, JetStream (pull + push consumers), and
+> Key-Value store are implemented and functional. Object store
+> and async publish are planned. The API may change.
 
 ## Requirements
 
@@ -1690,27 +1690,42 @@ if (client.connectedServerVersion()) |version| {
 | Create JS context | `jetstream.JetStream.init(client, opts)` | `JetStream` |
 | Create stream | `js.createStream(config)` | `!Response(StreamInfo)` |
 | Update stream | `js.updateStream(config)` | `!Response(StreamInfo)` |
+| Create or update stream | `js.createOrUpdateStream(config)` | `!Response(StreamInfo)` |
 | Stream info | `js.streamInfo(name)` | `!Response(StreamInfo)` |
 | Purge stream | `js.purgeStream(name)` | `!Response(PurgeResponse)` |
 | Purge subject | `js.purgeStreamSubject(name, subject)` | `!Response(PurgeResponse)` |
 | Delete stream | `js.deleteStream(name)` | `!Response(DeleteResponse)` |
+| Get message | `js.getMsg(stream, seq)` | `!Response(MsgGetResponse)` |
+| Get last msg for subject | `js.getLastMsgForSubject(stream, subject)` | `!Response(MsgGetResponse)` |
+| Delete message | `js.deleteMsg(stream, seq)` | `!Response(DeleteResponse)` |
+| Secure delete message | `js.secureDeleteMsg(stream, seq)` | `!Response(DeleteResponse)` |
 | Stream names | `js.streamNames()` | `!Response(StreamNamesResponse)` |
 | All stream names | `js.allStreamNames(allocator)` | `![][]const u8` |
 | Stream list | `js.streams()` | `!Response(StreamListResponse)` |
+| Stream by subject | `js.streamNameBySubject(subject)` | `!Response(StreamNamesResponse)` |
 | Account info | `js.accountInfo()` | `!Response(AccountInfo)` |
 | Create consumer | `js.createConsumer(stream, config)` | `!Response(ConsumerInfo)` |
 | Update consumer | `js.updateConsumer(stream, config)` | `!Response(ConsumerInfo)` |
+| Create or update consumer | `js.createOrUpdateConsumer(stream, config)` | `!Response(ConsumerInfo)` |
 | Consumer info | `js.consumerInfo(stream, consumer)` | `!Response(ConsumerInfo)` |
 | Delete consumer | `js.deleteConsumer(stream, consumer)` | `!Response(DeleteResponse)` |
 | Consumer names | `js.consumerNames(stream)` | `!Response(ConsumerNamesResponse)` |
+| Pause consumer | `js.pauseConsumer(stream, consumer, until)` | `!Response(ConsumerPauseResponse)` |
+| Resume consumer | `js.resumeConsumer(stream, consumer)` | `!Response(ConsumerPauseResponse)` |
+| Create push consumer | `js.createPushConsumer(stream, config)` | `!Response(ConsumerInfo)` |
 | JS publish | `js.publish(subject, payload)` | `!Response(PubAck)` |
 | JS publish + opts | `js.publishWithOpts(subject, payload, opts)` | `!Response(PubAck)` |
 | Last API error | `js.lastApiError()` | `?ApiError` |
+| **Pull Consumers** | | |
 | Fetch messages | `pull.fetch(opts)` | `!FetchResult` |
 | Fetch no wait | `pull.fetchNoWait(max)` | `!FetchResult` |
+| Fetch bytes | `pull.fetchBytes(max_bytes, opts)` | `!FetchResult` |
 | Next (single msg) | `pull.next(timeout_ms)` | `!?JsMsg` |
 | Messages iterator | `pull.messages(opts)` | `!MessagesContext` |
 | Consume callback | `pull.consume(handler, opts)` | `!ConsumeContext` |
+| **Push Consumers** | | |
+| Push consume | `push.consume(handler, opts)` | `!ConsumeContext` |
+| **Message Ack** | | |
 | Message metadata | `msg.metadata()` | `?MsgMetadata` |
 | Ack message | `msg.ack()` | `!void` |
 | Nak message | `msg.nak()` | `!void` |
@@ -1720,19 +1735,26 @@ if (client.connectedServerVersion()) |version| {
 | Terminate + reason | `msg.termWithReason(reason)` | `!void` |
 | **Key-Value Store** | | |
 | Create KV bucket | `js.createKeyValue(config)` | `!KeyValue` |
+| Update KV bucket | `js.updateKeyValue(config)` | `!KeyValue` |
+| Create or update KV | `js.createOrUpdateKeyValue(config)` | `!KeyValue` |
 | Bind to bucket | `js.keyValue(bucket)` | `!KeyValue` |
 | Delete bucket | `js.deleteKeyValue(bucket)` | `!Response(DeleteResponse)` |
+| List bucket names | `js.keyValueStoreNames(allocator)` | `![][]const u8` |
 | Get value | `kv.get(key)` | `!?KeyValueEntry` |
 | Get revision | `kv.getRevision(key, rev)` | `!?KeyValueEntry` |
 | Put value | `kv.put(key, value)` | `!u64` (revision) |
 | Create (if new) | `kv.create(key, value)` | `!u64` (revision) |
 | Update (CAS) | `kv.update(key, value, rev)` | `!u64` (revision) |
-| Delete key | `kv.delete(key)` | `!void` |
-| Purge key | `kv.purge(key)` | `!void` |
+| Delete key | `kv.delete(key)` | `!u64` |
+| Purge key | `kv.purge(key)` | `!u64` |
 | List keys | `kv.keys(allocator)` | `![][]const u8` |
+| List keys (streaming) | `kv.listKeys()` | `!KeyLister` |
 | Key history | `kv.history(allocator, key)` | `![]KeyValueEntry` |
 | Watch pattern | `kv.watch(pattern)` | `!KvWatcher` |
+| Watch with options | `kv.watchWithOpts(pattern, opts)` | `!KvWatcher` |
 | Watch all | `kv.watchAll()` | `!KvWatcher` |
+| Watch filtered | `kv.watchFiltered(patterns, opts)` | `!KvWatcher` |
+| Purge delete markers | `kv.purgeDeletes(opts)` | `!u64` |
 | Bucket status | `kv.status()` | `!Response(StreamInfo)` |
 
 ---
@@ -1769,10 +1791,10 @@ zig build fmt
 | TLS | Implemented |
 | JetStream Core | Implemented |
 | JetStream Pull Consumers | Implemented |
+| JetStream Push Consumers | Implemented |
 | JetStream Ordered Consumer | Implemented |
 | Key-Value Store | Implemented |
 | Object Store | Planned |
-| Push Consumers | Planned |
 | Async Publish | Planned |
 
 ## Related Projects

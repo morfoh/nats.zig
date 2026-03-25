@@ -16,14 +16,18 @@ pub const MsgMetadata = message.MsgMetadata;
 const pull_mod = @import("jetstream/pull.zig");
 pub const PullSubscription = pull_mod.PullSubscription;
 pub const MessagesContext = pull_mod.MessagesContext;
+const push_mod = @import("jetstream/push.zig");
+pub const PushSubscription = push_mod.PushSubscription;
 const ordered_mod = @import("jetstream/ordered.zig");
 pub const OrderedConsumer = ordered_mod.OrderedConsumer;
 const kv_mod = @import("jetstream/kv.zig");
 pub const KeyValue = kv_mod.KeyValue;
 pub const KvWatcher = kv_mod.KvWatcher;
+pub const KeyLister = kv_mod.KeyValue.KeyLister;
 pub const KeyValueConfig = types.KeyValueConfig;
 pub const KeyValueEntry = types.KeyValueEntry;
 pub const KeyValueOp = types.KeyValueOp;
+pub const WatchOpts = types.WatchOpts;
 
 // Consumer abstractions
 pub const JsMsgHandler = consumer.JsMsgHandler;
@@ -40,6 +44,9 @@ pub const PubAck = types.PubAck;
 pub const ApiError = errors.ApiError;
 pub const Response = types.Response;
 pub const AccountInfo = types.AccountInfo;
+pub const ConsumerPauseResponse = types.ConsumerPauseResponse;
+pub const PublishOpts = types.PublishOpts;
+pub const MsgGetResponse = types.MsgGetResponse;
 
 test {
     std.testing.refAllDecls(@This());

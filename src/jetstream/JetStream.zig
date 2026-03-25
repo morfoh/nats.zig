@@ -19,6 +19,7 @@ pub const ConsumerInfo = types.ConsumerInfo;
 pub const CreateConsumerRequest = types.CreateConsumerRequest;
 pub const DeleteResponse = types.DeleteResponse;
 pub const PurgeResponse = types.PurgeResponse;
+pub const ConsumerPauseResponse = types.ConsumerPauseResponse;
 pub const PubAck = types.PubAck;
 pub const PublishOpts = types.PublishOpts;
 pub const StreamNamesResponse = types.StreamNamesResponse;
@@ -27,6 +28,7 @@ pub const ConsumerNamesResponse = types.ConsumerNamesResponse;
 pub const ConsumerListResponse = types.ConsumerListResponse;
 pub const ListRequest = types.ListRequest;
 pub const AccountInfo = types.AccountInfo;
+const StorageType = types.StorageType;
 pub const ApiError = errors.ApiError;
 pub const ApiErrorJson = errors.ApiErrorJson;
 
@@ -139,6 +141,27 @@ pub fn deleteStream(
     );
 }
 
+/// Creates a stream or updates it if it already exists.
+/// Tries update first; falls back to create on
+/// stream_not_found (matches Go client behavior).
+pub fn createOrUpdateStream(
+    self: *JetStream,
+    config: StreamConfig,
+) !Response(StreamInfo) {
+    std.debug.assert(config.name.len > 0);
+    std.debug.assert(self.timeout_ms > 0);
+    return self.updateStream(config) catch |err| {
+        if (err == error.ApiError) {
+            if (self.lastApiError()) |ae| {
+                if (ae.err_code ==
+                    errors.ErrCode.stream_not_found)
+                    return self.createStream(config);
+            }
+        }
+        return err;
+    };
+}
+
 /// Gets stream info by name.
 pub fn streamInfo(
     self: *JetStream,
@@ -200,11 +223,134 @@ fn purgeStreamFiltered(
     );
 }
 
+// -- Stream message operations --
+
+/// Gets a raw message from a stream by sequence number.
+pub fn getMsg(
+    self: *JetStream,
+    stream: []const u8,
+    seq: u64,
+) !Response(types.MsgGetResponse) {
+    std.debug.assert(stream.len > 0);
+    std.debug.assert(seq > 0);
+    std.debug.assert(self.timeout_ms > 0);
+    var buf: [256]u8 = undefined;
+    const subj = std.fmt.bufPrint(
+        &buf,
+        "STREAM.MSG.GET.{s}",
+        .{stream},
+    ) catch return errors.Error.SubjectTooLong;
+    return self.apiRequest(
+        types.MsgGetResponse,
+        subj,
+        types.MsgGetRequest{ .seq = seq },
+    );
+}
+
+/// Gets the last message on a specific subject.
+pub fn getLastMsgForSubject(
+    self: *JetStream,
+    stream: []const u8,
+    subject: []const u8,
+) !Response(types.MsgGetResponse) {
+    std.debug.assert(stream.len > 0);
+    std.debug.assert(subject.len > 0);
+    std.debug.assert(self.timeout_ms > 0);
+    var buf: [256]u8 = undefined;
+    const subj = std.fmt.bufPrint(
+        &buf,
+        "STREAM.MSG.GET.{s}",
+        .{stream},
+    ) catch return errors.Error.SubjectTooLong;
+    return self.apiRequest(
+        types.MsgGetResponse,
+        subj,
+        types.MsgGetRequest{ .last_by_subj = subject },
+    );
+}
+
+/// Deletes a message from a stream by sequence.
+/// The message is marked as erased but not overwritten.
+pub fn deleteMsg(
+    self: *JetStream,
+    stream: []const u8,
+    seq: u64,
+) !Response(DeleteResponse) {
+    std.debug.assert(stream.len > 0);
+    std.debug.assert(seq > 0);
+    std.debug.assert(self.timeout_ms > 0);
+    var buf: [256]u8 = undefined;
+    const subj = std.fmt.bufPrint(
+        &buf,
+        "STREAM.MSG.DELETE.{s}",
+        .{stream},
+    ) catch return errors.Error.SubjectTooLong;
+    return self.apiRequest(
+        DeleteResponse,
+        subj,
+        types.MsgDeleteRequest{
+            .seq = seq,
+            .no_erase = true,
+        },
+    );
+}
+
+/// Securely deletes a message by overwriting it with
+/// random data. Slower than deleteMsg.
+pub fn secureDeleteMsg(
+    self: *JetStream,
+    stream: []const u8,
+    seq: u64,
+) !Response(DeleteResponse) {
+    std.debug.assert(stream.len > 0);
+    std.debug.assert(seq > 0);
+    std.debug.assert(self.timeout_ms > 0);
+    var buf: [256]u8 = undefined;
+    const subj = std.fmt.bufPrint(
+        &buf,
+        "STREAM.MSG.DELETE.{s}",
+        .{stream},
+    ) catch return errors.Error.SubjectTooLong;
+    return self.apiRequest(
+        DeleteResponse,
+        subj,
+        types.MsgDeleteRequest{ .seq = seq },
+    );
+}
+
 // -- Consumer CRUD --
 
-/// Creates a consumer on the given stream. The
-/// filter_subject (if any) is sent in the JSON body.
+/// Creates a consumer on the given stream. Returns
+/// error if consumer already exists with different
+/// config. The filter_subject (if any) is in the body.
 pub fn createConsumer(
+    self: *JetStream,
+    stream: []const u8,
+    config: ConsumerConfig,
+) !Response(ConsumerInfo) {
+    std.debug.assert(stream.len > 0);
+    std.debug.assert(self.timeout_ms > 0);
+    var buf: [512]u8 = undefined;
+    const name = config.name orelse
+        config.durable_name orelse "";
+    std.debug.assert(name.len > 0);
+    const subj = std.fmt.bufPrint(
+        &buf,
+        "CONSUMER.CREATE.{s}.{s}",
+        .{ stream, name },
+    ) catch return errors.Error.SubjectTooLong;
+    const req = CreateConsumerRequest{
+        .stream_name = stream,
+        .config = config,
+        .action = "create",
+    };
+    return self.apiRequest(ConsumerInfo, subj, req);
+}
+
+/// Creates or updates a consumer on the given stream.
+/// If the consumer exists, it will be updated if the
+/// config change is compatible.
+pub fn createOrUpdateConsumer(
     self: *JetStream,
     stream: []const u8,
     config: ConsumerConfig,
@@ -289,6 +435,82 @@ pub fn consumerInfo(
     return self.apiRequestNoPayload(
         ConsumerInfo,
         subj,
+    );
+}
+
+/// Creates a push consumer on the given stream.
+/// The config must have deliver_subject set.
+pub fn createPushConsumer(
+    self: *JetStream,
+    stream: []const u8,
+    config: ConsumerConfig,
+) !Response(ConsumerInfo) {
+    std.debug.assert(stream.len > 0);
+    std.debug.assert(config.deliver_subject != null);
+    std.debug.assert(self.timeout_ms > 0);
+    return self.createConsumer(stream, config);
+}
+
+/// Creates or updates a push consumer.
+/// The config must have deliver_subject set.
+pub fn createOrUpdatePushConsumer(
+    self: *JetStream,
+    stream: []const u8,
+    config: ConsumerConfig,
+) !Response(ConsumerInfo) {
+    std.debug.assert(stream.len > 0);
+    std.debug.assert(config.deliver_subject != null);
+    std.debug.assert(self.timeout_ms > 0);
+    return self.createOrUpdateConsumer(stream, config);
+}
+
+/// Pauses a consumer until the given time (RFC 3339).
+/// The consumer will not deliver messages until resumed
+/// or the pause_until time is reached.
+pub fn pauseConsumer(
+    self: *JetStream,
+    stream: []const u8,
+    consumer: []const u8,
+    pause_until: []const u8,
+) !Response(ConsumerPauseResponse) {
+    std.debug.assert(stream.len > 0);
+    std.debug.assert(consumer.len > 0);
+    std.debug.assert(pause_until.len > 0);
+    std.debug.assert(self.timeout_ms > 0);
+    var buf: [512]u8 = undefined;
+    const subj = std.fmt.bufPrint(
+        &buf,
+        "CONSUMER.PAUSE.{s}.{s}",
+        .{ stream, consumer },
+    ) catch return errors.Error.SubjectTooLong;
+    return self.apiRequest(
+        ConsumerPauseResponse,
+        subj,
+        types.ConsumerPauseRequest{
+            .pause_until = pause_until,
+        },
+    );
+}
+
+/// Resumes a paused consumer immediately.
+pub fn resumeConsumer(
+    self: *JetStream,
+    stream: []const u8,
+    consumer: []const u8,
+) !Response(ConsumerPauseResponse) {
+    std.debug.assert(stream.len > 0);
+    std.debug.assert(consumer.len > 0);
+    std.debug.assert(self.timeout_ms > 0);
+    var buf: [512]u8 = undefined;
+    const subj = std.fmt.bufPrint(
+        &buf,
+        "CONSUMER.PAUSE.{s}.{s}",
+        .{ stream, consumer },
+    ) catch return errors.Error.SubjectTooLong;
+    return self.apiRequest(
+        ConsumerPauseResponse,
+        subj,
+        types.ConsumerPauseRequest{},
     );
 }
 
@@ -454,56 +676,46 @@ pub fn createKeyValue(
     std.debug.assert(cfg.bucket.len > 0);
     std.debug.assert(cfg.bucket.len <= 64);
     std.debug.assert(self.timeout_ms > 0);
-
-    var stream_buf: [68]u8 = undefined;
-    const stream_name = std.fmt.bufPrint(
-        &stream_buf,
-        "KV_{s}",
-        .{cfg.bucket},
-    ) catch return errors.Error.SubjectTooLong;
-
-    var subj_buf: [128]u8 = undefined;
-    const subj_pattern = std.fmt.bufPrint(
-        &subj_buf,
-        "$KV.{s}.>",
-        .{cfg.bucket},
-    ) catch return errors.Error.SubjectTooLong;
-
-    const subjects: [1][]const u8 = .{subj_pattern};
-    const hist: i64 = if (cfg.history) |h|
-        @intCast(h)
-    else
-        1;
-
-    // Duplicate window: 2min or TTL (whichever smaller)
-    const two_min_ns: i64 = 120_000_000_000;
-    const dup_window: ?i64 = if (cfg.ttl) |ttl|
-        @min(ttl, two_min_ns)
-    else
-        two_min_ns;
-
-    var resp = try self.createStream(.{
-        .name = stream_name,
-        .subjects = &subjects,
-        .max_msgs_per_subject = hist,
-        .max_bytes = cfg.max_bytes,
-        .max_age = cfg.ttl,
-        .max_msg_size = cfg.max_value_size,
-        .storage = cfg.storage orelse .file,
-        .num_replicas = cfg.replicas,
-        .discard = .new,
-        .duplicate_window = dup_window,
-        .max_msgs = -1,
-        .max_consumers = -1,
-        .allow_rollup_hdrs = true,
-        .deny_delete = true,
-        .deny_purge = false,
-        .allow_direct = true,
-        .mirror_direct = false,
-        .description = cfg.description,
-    });
+    const sc = self.kvStreamConfig(cfg);
+    var resp = try self.createStream(sc.config(
+        sc.stream_name(),
+        &sc.subjects,
+    ));
     resp.deinit();
+    return self.initKeyValue(cfg.bucket);
+}
 
+/// Updates an existing key-value bucket config.
+/// Returns error if the bucket doesn't exist.
+pub fn updateKeyValue(
+    self: *JetStream,
+    cfg: KeyValueConfig,
+) !KeyValue {
+    std.debug.assert(cfg.bucket.len > 0);
+    std.debug.assert(cfg.bucket.len <= 64);
+    std.debug.assert(self.timeout_ms > 0);
+    const sc = self.kvStreamConfig(cfg);
+    var resp = try self.updateStream(sc.config(
+        sc.stream_name(),
+        &sc.subjects,
+    ));
+    resp.deinit();
+    return self.initKeyValue(cfg.bucket);
+}
+
+/// Creates or updates a key-value bucket.
+pub fn createOrUpdateKeyValue(
+    self: *JetStream,
+    cfg: KeyValueConfig,
+) !KeyValue {
+    std.debug.assert(cfg.bucket.len > 0);
+    std.debug.assert(cfg.bucket.len <= 64);
+    std.debug.assert(self.timeout_ms > 0);
+    const sc = self.kvStreamConfig(cfg);
+    var resp = try self.createOrUpdateStream(
+        sc.config(sc.stream_name(), &sc.subjects),
+    );
+    resp.deinit();
     return self.initKeyValue(cfg.bucket);
 }
 
@@ -568,6 +780,148 @@ fn initKeyValue(
     kv.stream_len = @intCast(sn.len);
 
     return kv;
+}
+
+/// Builds the stream config for a KV bucket without
+/// executing the API call. Shared by create/update/
+/// createOrUpdate.
+const KvStreamCfg = struct {
+    stream_name_buf: [68]u8 = undefined,
+    stream_name_len: u8 = 0,
+    subj_buf: [128]u8 = undefined,
+    subj_len: u8 = 0,
+    subjects: [1][]const u8 = undefined,
+    hist: i64 = 1,
+    dup_window: ?i64 = null,
+    max_bytes: ?i64 = null,
+    max_age: ?i64 = null,
+    max_msg_size: ?i32 = null,
+    storage: StorageType = .file,
+    replicas: ?i32 = null,
+    desc: ?[]const u8 = null,
+
+    fn stream_name(
+        self: *const KvStreamCfg,
+    ) []const u8 {
+        std.debug.assert(self.stream_name_len > 0);
+        return self.stream_name_buf[0..self.stream_name_len];
+    }
+
+    fn config(
+        self: *const KvStreamCfg,
+        name: []const u8,
+        subjects: *const [1][]const u8,
+    ) StreamConfig {
+        return .{
+            .name = name,
+            .subjects = subjects,
+            .max_msgs_per_subject = self.hist,
+            .max_bytes = self.max_bytes,
+            .max_age = self.max_age,
+            .max_msg_size = self.max_msg_size,
+            .storage = self.storage,
+            .num_replicas = self.replicas,
+            .discard = .new,
+            .duplicate_window = self.dup_window,
+            .max_msgs = -1,
+            .max_consumers = -1,
+            .allow_rollup_hdrs = true,
+            .deny_delete = true,
+            .deny_purge = false,
+            .allow_direct = true,
+            .mirror_direct = false,
+            .description = self.desc,
+        };
+    }
+};
+
+fn kvStreamConfig(
+    _: *const JetStream,
+    cfg: KeyValueConfig,
+) KvStreamCfg {
+    std.debug.assert(cfg.bucket.len > 0);
+    var sc = KvStreamCfg{};
+
+    const sn = std.fmt.bufPrint(
+        &sc.stream_name_buf,
+        "KV_{s}",
+        .{cfg.bucket},
+    ) catch unreachable;
+    sc.stream_name_len = @intCast(sn.len);
+
+    const sp = std.fmt.bufPrint(
+        &sc.subj_buf,
+        "$KV.{s}.>",
+        .{cfg.bucket},
+    ) catch unreachable;
+    sc.subj_len = @intCast(sp.len);
+    sc.subjects = .{
+        sc.subj_buf[0..sc.subj_len],
+    };
+
+    sc.hist = if (cfg.history) |h|
+        @intCast(h)
+    else
+        1;
+
+    const two_min: i64 = 120_000_000_000;
+    sc.dup_window = if (cfg.ttl) |ttl|
+        @min(ttl, two_min)
+    else
+        two_min;
+
+    sc.max_bytes = cfg.max_bytes;
+    sc.max_age = cfg.ttl;
+    sc.max_msg_size = cfg.max_value_size;
+    sc.storage = cfg.storage orelse .file;
+    sc.replicas = cfg.replicas;
+    sc.desc = cfg.description;
+
+    return sc;
+}
+
+/// Returns names of all key-value buckets. Queries
+/// stream names with $KV subject filter, strips the
+/// KV_ prefix. Caller owns the returned slice.
+pub fn keyValueStoreNames(
+    self: *JetStream,
+    alloc: std.mem.Allocator,
+) ![][]const u8 {
+    std.debug.assert(self.timeout_ms > 0);
+    var result: std.ArrayList([]const u8) = .empty;
+    errdefer {
+        for (result.items) |n| alloc.free(n);
+        result.deinit(alloc);
+    }
+    var offset: u64 = 0;
+    while (true) {
+        var resp = try self.apiRequest(
+            StreamNamesResponse,
+            "STREAM.NAMES",
+            ListRequest{
+                .offset = offset,
+                .subject = "$KV.*.>",
+            },
+        );
+        defer resp.deinit();
+        const names = resp.value.streams orelse break;
+        for (names) |n| {
+            // Strip "KV_" prefix
+            const bucket = if (n.len > 3 and
+                std.mem.startsWith(u8, n, "KV_"))
+                n[3..]
+            else
+                n;
+            const owned = try alloc.dupe(u8, bucket);
+            result.append(alloc, owned) catch |e| {
+                alloc.free(owned);
+                return e;
+            };
+        }
+        offset += names.len;
+        if (offset >= resp.value.total) break;
+    }
+    return result.toOwnedSlice(alloc);
 }
 
 // -- JetStream Publish --
@@ -647,7 +1001,7 @@ pub fn publishWithOpts(
     std.debug.assert(subject.len > 0);
     std.debug.assert(payload.len <= 1048576);
 
-    var hdr_entries: [5]headers.Entry = undefined;
+    var hdr_entries: [6]headers.Entry = undefined;
     var hdr_count: usize = 0;
 
     if (opts.msg_id) |v| {
@@ -696,6 +1050,13 @@ pub fn publishWithOpts(
         hdr_entries[hdr_count] = .{
             .key = headers.HeaderName.expected_last_subj_seq,
             .value = s,
+        };
+        hdr_count += 1;
+    }
+    if (opts.ttl) |v| {
+        hdr_entries[hdr_count] = .{
+            .key = headers.HeaderName.msg_ttl,
+            .value = v,
         };
         hdr_count += 1;
     }

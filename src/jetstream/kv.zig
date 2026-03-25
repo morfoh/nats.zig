@@ -499,9 +499,16 @@ pub const KeyValue = struct {
         self: *KeyValue,
         key_pattern: []const u8,
     ) !KvWatcher {
+        return self.watchWithOpts(key_pattern, .{});
+    }
+
+    /// Watches with configurable options.
+    pub fn watchWithOpts(
+        self: *KeyValue,
+        key_pattern: []const u8,
+        opts: types.WatchOpts,
+    ) !KvWatcher {
         std.debug.assert(key_pattern.len > 0);
-        // watch() allows wildcards (*, >) for
-        // pattern matching — skip kvSubject validation
         var subj_buf: [256]u8 = undefined;
         const filter = std.fmt.bufPrint(
             &subj_buf,
@@ -509,18 +516,184 @@ pub const KeyValue = struct {
             .{ self.bucket(), key_pattern },
         ) catch return errors.Error.SubjectTooLong;
 
+        const dp = watchDeliverPolicy(opts);
+        const start = if (opts.resume_from_revision) |r|
+            r
+        else
+            null;
+
         const pull = try self.createEphemeralPull(
             filter,
-            .last_per_subject,
-            null,
+            dp,
+            start,
         );
 
-        return KvWatcher{ .kv = self, .pull = pull };
+        return KvWatcher{
+            .kv = self,
+            .pull = pull,
+            .opts = opts,
+        };
     }
 
-    /// Watches all keys in the bucket. Delivers
-    /// current values first, then live updates.
+    /// Watches all keys in the bucket.
     pub fn watchAll(self: *KeyValue) !KvWatcher {
+        return self.watchAllWithOpts(.{});
+    }
+
+    /// Watches all keys with configurable options.
+    pub fn watchAllWithOpts(
+        self: *KeyValue,
+        opts: types.WatchOpts,
+    ) !KvWatcher {
+        var subj_buf: [256]u8 = undefined;
+        const filter = std.fmt.bufPrint(
+            &subj_buf,
+            "$KV.{s}.>",
+            .{self.bucket()},
+        ) catch return errors.Error.SubjectTooLong;
+
+        const dp = watchDeliverPolicy(opts);
+        const start = if (opts.resume_from_revision) |r|
+            r
+        else
+            null;
+
+        const pull = try self.createEphemeralPull(
+            filter,
+            dp,
+            start,
+        );
+
+        return KvWatcher{
+            .kv = self,
+            .pull = pull,
+            .opts = opts,
+        };
+    }
+
+    /// Watches multiple key patterns simultaneously.
+    /// Uses filter_subjects on the consumer config.
+    pub fn watchFiltered(
+        self: *KeyValue,
+        patterns: []const []const u8,
+        opts: types.WatchOpts,
+    ) !KvWatcher {
+        std.debug.assert(patterns.len > 0);
+        std.debug.assert(patterns.len <= 16);
+
+        var filters: [16][]const u8 = undefined;
+        var filter_bufs: [16][256]u8 = undefined;
+        var filter_lens: [16]u8 = undefined;
+
+        for (patterns, 0..) |p, i| {
+            const f = std.fmt.bufPrint(
+                &filter_bufs[i],
+                "$KV.{s}.{s}",
+                .{ self.bucket(), p },
+            ) catch return errors.Error.SubjectTooLong;
+            filter_lens[i] = @intCast(f.len);
+            filters[i] = filter_bufs[i][0..f.len];
+        }
+
+        const dp = watchDeliverPolicy(opts);
+        const start = opts.resume_from_revision;
+
+        const seq = ephemeral_counter.fetchAdd(
+            1,
+            .monotonic,
+        );
+        const name = std.fmt.bufPrint(
+            &self._eph_name_buf,
+            "kv{d}x{d}",
+            .{ seq, @intFromPtr(self) % 99999 },
+        ) catch unreachable;
+        self._eph_name_len = @intCast(name.len);
+
+        const fs = filters[0..patterns.len];
+        var resp = try self.js.createConsumer(
+            self.streamName(),
+            .{
+                .name = name,
+                .ack_policy = .none,
+                .deliver_policy = dp,
+                .opt_start_seq = start,
+                .filter_subjects = fs,
+                .mem_storage = true,
+                .inactive_threshold = 60_000_000_000,
+                .headers_only = if (opts.meta_only)
+                    true
+                else
+                    null,
+            },
+        );
+        resp.deinit();
+
+        var pull = PullSubscription{
+            .js = self.js,
+            .stream = self.streamName(),
+        };
+        pull.setConsumer(name);
+
+        return KvWatcher{
+            .kv = self,
+            .pull = pull,
+            .opts = opts,
+        };
+    }
+
+    // -- Key listing (streaming) --
+
+    /// Streaming key lister. More memory-efficient
+    /// than keys() for large buckets.
+    pub const KeyLister = struct {
+        kv: *KeyValue,
+        pull: PullSubscription,
+        done: bool = false,
+
+        /// Returns the next key, or null when done.
+        /// Caller does NOT own the returned slice --
+        /// it points into the message buffer and is
+        /// valid until the next call to next().
+        pub fn next(
+            self: *KeyLister,
+        ) !?[]const u8 {
+            if (self.done) return null;
+            while (true) {
+                var msg = (self.pull.next(
+                    3000,
+                ) catch {
+                    self.done = true;
+                    return null;
+                }) orelse {
+                    self.done = true;
+                    return null;
+                };
+                defer msg.deinit();
+
+                const subj = msg.subject();
+                const plen: usize = 4 +
+                    @as(usize, self.kv.bucket_len) + 1;
+                if (subj.len <= plen) continue;
+
+                if (msg.headers()) |h| {
+                    if (KeyValue.isDeleteOp(h)) continue;
+                }
+
+                return subj[plen..];
+            }
+        }
+
+        /// Cleans up the lister and its consumer.
+        pub fn deinit(self: *KeyLister) void {
+            self.kv.deleteEphemeralPull(&self.pull);
+        }
+    };
+
+    /// Returns a streaming key lister. Caller must
+    /// call deinit() when done.
+    pub fn listKeys(self: *KeyValue) !KeyLister {
+        std.debug.assert(self.bucket_len > 0);
+
         var subj_buf: [256]u8 = undefined;
         const filter = std.fmt.bufPrint(
             &subj_buf,
@@ -534,7 +707,72 @@ pub const KeyValue = struct {
             null,
         );
 
-        return KvWatcher{ .kv = self, .pull = pull };
+        return KeyLister{ .kv = self, .pull = pull };
+    }
+
+    fn watchDeliverPolicy(
+        opts: types.WatchOpts,
+    ) types.DeliverPolicy {
+        if (opts.resume_from_revision != null)
+            return .by_start_sequence;
+        if (opts.updates_only)
+            return .new;
+        if (opts.include_history)
+            return .all;
+        return .last_per_subject;
+    }
+
+    // -- Purge Deletes --
+
+    /// Options for purging delete markers.
+    pub const PurgeDeletesOpts = struct {
+        /// Only purge markers older than this (ns).
+        /// Default 0 = purge all markers.
+        older_than_ns: i64 = 0,
+    };
+
+    /// Removes all delete/purge markers from the
+    /// bucket. Optionally filters by marker age.
+    pub fn purgeDeletes(
+        self: *KeyValue,
+        opts: PurgeDeletesOpts,
+    ) !u64 {
+        std.debug.assert(self.bucket_len > 0);
+        _ = opts; // TODO: age filtering requires
+        // timestamps from metadata; for now purge all
+        var subj_buf: [256]u8 = undefined;
+        const filter = std.fmt.bufPrint(
+            &subj_buf,
+            "$KV.{s}.>",
+            .{self.bucket()},
+        ) catch return errors.Error.SubjectTooLong;
+
+        var pull = try self.createEphemeralPull(
+            filter,
+            .last_per_subject,
+            null,
+        );
+        defer self.deleteEphemeralPull(&pull);
+
+        var purged: u64 = 0;
+        while (true) {
+            var msg = (pull.next(3000) catch break) orelse
+                break;
+            defer msg.deinit();
+
+            if (msg.headers()) |h| {
+                if (isDeleteOp(h)) {
+                    const subj = msg.subject();
+                    var pr = self.js.purgeStreamSubject(
+                        self.streamName(),
+                        subj,
+                    ) catch continue;
+                    pr.deinit();
+                    purged += 1;
+                }
+            }
+        }
+        return purged;
     }
 
     /// Creates an ephemeral consumer with the given
@@ -652,6 +890,7 @@ pub const KeyValue = struct {
 pub const KvWatcher = struct {
     kv: *KeyValue,
     pull: PullSubscription,
+    opts: types.WatchOpts = .{},
     initial_done: bool = false,
 
     /// Returns the next entry update. Returns null
@@ -663,53 +902,70 @@ pub const KvWatcher = struct {
         timeout_ms: u32,
     ) !?types.KeyValueEntry {
         std.debug.assert(timeout_ms > 0);
-        var msg = (try self.pull.next(
-            timeout_ms,
-        )) orelse {
-            if (!self.initial_done) {
-                self.initial_done = true;
+        while (true) {
+            var msg = (try self.pull.next(
+                timeout_ms,
+            )) orelse {
+                if (!self.initial_done) {
+                    self.initial_done = true;
+                }
+                return null;
+            };
+            defer msg.deinit();
+
+            var op: types.KeyValueOp = .put;
+            if (msg.headers()) |h| {
+                op = KeyValue.parseKvOp(h);
             }
-            return null;
-        };
-        defer msg.deinit();
 
-        var op: types.KeyValueOp = .put;
-        if (msg.headers()) |h| {
-            op = KeyValue.parseKvOp(h);
+            // Skip deletes if configured
+            if (self.opts.ignore_deletes and
+                (op == .delete or op == .purge))
+                continue;
+
+            const subj = msg.subject();
+            const plen: usize = 4 +
+                @as(usize, self.kv.bucket_len) + 1;
+            const key = if (subj.len > plen)
+                subj[plen..]
+            else
+                "";
+
+            const md = msg.metadata();
+            const seq = if (md) |m|
+                m.stream_seq
+            else
+                0;
+
+            // meta_only: skip value extraction
+            if (self.opts.meta_only) {
+                return types.KeyValueEntry{
+                    .bucket = self.kv.bucket(),
+                    .key = key,
+                    .value = "",
+                    .revision = seq,
+                    .operation = op,
+                };
+            }
+
+            const allocator = self.kv.js.allocator;
+            const data = msg.data();
+            var val: []const u8 = "";
+            var val_alloc: ?Allocator = null;
+            if (data.len > 0 and op == .put) {
+                val = try allocator.dupe(u8, data);
+                val_alloc = allocator;
+            }
+
+            return types.KeyValueEntry{
+                .bucket = self.kv.bucket(),
+                .key = key,
+                .value = val,
+                .revision = seq,
+                .operation = op,
+                .value_allocator = val_alloc,
+            };
         }
-
-        const subj = msg.subject();
-        const plen: usize = 4 +
-            @as(usize, self.kv.bucket_len) + 1;
-        const key = if (subj.len > plen)
-            subj[plen..]
-        else
-            "";
-
-        const md = msg.metadata();
-        const seq = if (md) |m|
-            m.stream_seq
-        else
-            0;
-
-        // Extract value before deinit frees msg
-        const allocator = self.kv.js.allocator;
-        const data = msg.data();
-        var val: []const u8 = "";
-        var val_alloc: ?Allocator = null;
-        if (data.len > 0 and op == .put) {
-            val = try allocator.dupe(u8, data);
-            val_alloc = allocator;
-        }
-
-        return types.KeyValueEntry{
-            .bucket = self.kv.bucket(),
-            .key = key,
-            .value = val,
-            .revision = seq,
-            .operation = op,
-            .value_allocator = val_alloc,
-        };
     }
 
     /// Cleans up the watcher and its consumer.

@@ -32,6 +32,7 @@ pub const HeaderName = struct {
     pub const last_stream = "Nats-Last-Stream";
     pub const consumer_stalled = "Nats-Consumer-Stalled";
     pub const rollup = "Nats-Rollup";
+    pub const msg_ttl = "Nats-TTL";
     pub const no_responders = "Status";
     pub const description = "Description";
 };

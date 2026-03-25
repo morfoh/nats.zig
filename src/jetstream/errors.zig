@@ -82,6 +82,7 @@ pub const Error = error{
     InvalidData,
     KeyNotFound,
     WrongLastRevision,
+    ThreadSpawnFailed,
 };
 
 test "ApiError.fromJson" {

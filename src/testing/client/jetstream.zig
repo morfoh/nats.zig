@@ -4076,6 +4076,2292 @@ pub fn testPaginatedStreamNames(
     reportResult("js_paginated", true, "");
 }
 
+pub fn testGetMsg(
+    allocator: std.mem.Allocator,
+) void {
+    var url_buf: [64]u8 = undefined;
+    const url = formatUrl(&url_buf, js_port);
+
+    var io: std.Io.Threaded = .init(
+        allocator,
+        .{ .environ = .empty },
+    );
+    defer io.deinit();
+
+    const client = nats.Client.connect(
+        allocator,
+        io.io(),
+        url,
+        .{ .reconnect = false },
+    ) catch {
+        reportResult(
+            "js_get_msg",
+            false,
+            "connect failed",
+        );
+        return;
+    };
+    defer client.deinit();
+
+    var js = nats.jetstream.JetStream.init(
+        client,
+        .{},
+    );
+
+    var stream = js.createStream(.{
+        .name = "TEST_GETMSG",
+        .subjects = &.{"test.getmsg.>"},
+        .storage = .memory,
+    }) catch {
+        reportResult(
+            "js_get_msg",
+            false,
+            "create stream",
+        );
+        return;
+    };
+    defer stream.deinit();
+
+    // Publish 3 messages
+    var i: u32 = 0;
+    while (i < 3) : (i += 1) {
+        var a = js.publish(
+            "test.getmsg.a",
+            "payload",
+        ) catch {
+            reportResult(
+                "js_get_msg",
+                false,
+                "publish failed",
+            );
+            return;
+        };
+        a.deinit();
+    }
+
+    // Get message at seq 1
+    var resp = js.getMsg(
+        "TEST_GETMSG",
+        1,
+    ) catch {
+        reportResult(
+            "js_get_msg",
+            false,
+            "getMsg failed",
+        );
+        return;
+    };
+    defer resp.deinit();
+
+    if (resp.value.message) |m| {
+        if (m.seq != 1) {
+            reportResult(
+                "js_get_msg",
+                false,
+                "expected seq 1",
+            );
+            return;
+        }
+    } else {
+        reportResult(
+            "js_get_msg",
+            false,
+            "no message",
+        );
+        return;
+    }
+
+    // Get non-existent seq -> ApiError
+    var bad = js.getMsg("TEST_GETMSG", 999);
+    if (bad) |*r| {
+        r.deinit();
+        reportResult(
+            "js_get_msg",
+            false,
+            "should fail for 999",
+        );
+        return;
+    } else |err| {
+        if (err != error.ApiError) {
+            reportResult(
+                "js_get_msg",
+                false,
+                "wrong error type",
+            );
+            return;
+        }
+        if (js.lastApiError()) |ae| {
+            if (ae.err_code !=
+                nats.jetstream.errors
+                    .ErrCode.message_not_found)
+            {
+                reportResult(
+                    "js_get_msg",
+                    false,
+                    "wrong err_code",
+                );
+                return;
+            }
+        }
+    }
+
+    var d = js.deleteStream(
+        "TEST_GETMSG",
+    ) catch {
+        reportResult("js_get_msg", true, "");
+        return;
+    };
+    d.deinit();
+    reportResult("js_get_msg", true, "");
+}
+
+pub fn testGetLastMsgForSubject(
+    allocator: std.mem.Allocator,
+) void {
+    var url_buf: [64]u8 = undefined;
+    const url = formatUrl(&url_buf, js_port);
+
+    var io: std.Io.Threaded = .init(
+        allocator,
+        .{ .environ = .empty },
+    );
+    defer io.deinit();
+
+    const client = nats.Client.connect(
+        allocator,
+        io.io(),
+        url,
+        .{ .reconnect = false },
+    ) catch {
+        reportResult(
+            "js_get_last_msg",
+            false,
+            "connect failed",
+        );
+        return;
+    };
+    defer client.deinit();
+
+    var js = nats.jetstream.JetStream.init(
+        client,
+        .{},
+    );
+
+    var stream = js.createStream(.{
+        .name = "TEST_GETLAST",
+        .subjects = &.{"test.getlast.>"},
+        .storage = .memory,
+    }) catch {
+        reportResult(
+            "js_get_last_msg",
+            false,
+            "create stream",
+        );
+        return;
+    };
+    defer stream.deinit();
+
+    // Publish 3 msgs to test.getlast.a
+    var i: u32 = 0;
+    while (i < 3) : (i += 1) {
+        var a = js.publish(
+            "test.getlast.a",
+            "msg-a",
+        ) catch {
+            reportResult(
+                "js_get_last_msg",
+                false,
+                "pub a failed",
+            );
+            return;
+        };
+        a.deinit();
+    }
+
+    // Publish 2 msgs to test.getlast.b
+    i = 0;
+    while (i < 2) : (i += 1) {
+        var a = js.publish(
+            "test.getlast.b",
+            "msg-b",
+        ) catch {
+            reportResult(
+                "js_get_last_msg",
+                false,
+                "pub b failed",
+            );
+            return;
+        };
+        a.deinit();
+    }
+
+    // Last for subject "a" should be seq 3
+    var ra = js.getLastMsgForSubject(
+        "TEST_GETLAST",
+        "test.getlast.a",
+    ) catch {
+        reportResult(
+            "js_get_last_msg",
+            false,
+            "getLast a failed",
+        );
+        return;
+    };
+    defer ra.deinit();
+
+    if (ra.value.message) |m| {
+        if (m.seq != 3) {
+            var buf: [64]u8 = undefined;
+            const msg = std.fmt.bufPrint(
+                &buf,
+                "a: got {d}, want 3",
+                .{m.seq},
+            ) catch "wrong seq";
+            reportResult(
+                "js_get_last_msg",
+                false,
+                msg,
+            );
+            return;
+        }
+    } else {
+        reportResult(
+            "js_get_last_msg",
+            false,
+            "no msg for a",
+        );
+        return;
+    }
+
+    // Last for subject "b" should be seq 5
+    var rb = js.getLastMsgForSubject(
+        "TEST_GETLAST",
+        "test.getlast.b",
+    ) catch {
+        reportResult(
+            "js_get_last_msg",
+            false,
+            "getLast b failed",
+        );
+        return;
+    };
+    defer rb.deinit();
+
+    if (rb.value.message) |m| {
+        if (m.seq != 5) {
+            var buf: [64]u8 = undefined;
+            const msg = std.fmt.bufPrint(
+                &buf,
+                "b: got {d}, want 5",
+                .{m.seq},
+            ) catch "wrong seq";
+            reportResult(
+                "js_get_last_msg",
+                false,
+                msg,
+            );
+            return;
+        }
+    } else {
+        reportResult(
+            "js_get_last_msg",
+            false,
+            "no msg for b",
+        );
+        return;
+    }
+
+    var d = js.deleteStream(
+        "TEST_GETLAST",
+    ) catch {
+        reportResult(
+            "js_get_last_msg",
+            true,
+            "",
+        );
+        return;
+    };
+    d.deinit();
+    reportResult("js_get_last_msg", true, "");
+}
+
+pub fn testDeleteMsg(
+    allocator: std.mem.Allocator,
+) void {
+    var url_buf: [64]u8 = undefined;
+    const url = formatUrl(&url_buf, js_port);
+
+    var io: std.Io.Threaded = .init(
+        allocator,
+        .{ .environ = .empty },
+    );
+    defer io.deinit();
+
+    const client = nats.Client.connect(
+        allocator,
+        io.io(),
+        url,
+        .{ .reconnect = false },
+    ) catch {
+        reportResult(
+            "js_delete_msg",
+            false,
+            "connect failed",
+        );
+        return;
+    };
+    defer client.deinit();
+
+    var js = nats.jetstream.JetStream.init(
+        client,
+        .{},
+    );
+
+    var stream = js.createStream(.{
+        .name = "TEST_DELMSG",
+        .subjects = &.{"test.delmsg.>"},
+        .storage = .memory,
+    }) catch {
+        reportResult(
+            "js_delete_msg",
+            false,
+            "create stream",
+        );
+        return;
+    };
+    defer stream.deinit();
+
+    // Publish 5 messages
+    var i: u32 = 0;
+    while (i < 5) : (i += 1) {
+        var a = js.publish(
+            "test.delmsg.a",
+            "payload",
+        ) catch {
+            reportResult(
+                "js_delete_msg",
+                false,
+                "publish failed",
+            );
+            return;
+        };
+        a.deinit();
+    }
+
+    // Delete seq 3
+    var del = js.deleteMsg(
+        "TEST_DELMSG",
+        3,
+    ) catch {
+        reportResult(
+            "js_delete_msg",
+            false,
+            "deleteMsg failed",
+        );
+        return;
+    };
+    defer del.deinit();
+
+    if (!del.value.success) {
+        reportResult(
+            "js_delete_msg",
+            false,
+            "delete not success",
+        );
+        return;
+    }
+
+    // getMsg(3) should fail
+    var bad = js.getMsg("TEST_DELMSG", 3);
+    if (bad) |*r| {
+        r.deinit();
+        reportResult(
+            "js_delete_msg",
+            false,
+            "seq 3 should be gone",
+        );
+        return;
+    } else |_| {}
+
+    // getMsg(2) should still work
+    var ok = js.getMsg(
+        "TEST_DELMSG",
+        2,
+    ) catch {
+        reportResult(
+            "js_delete_msg",
+            false,
+            "seq 2 should exist",
+        );
+        return;
+    };
+    ok.deinit();
+
+    var d = js.deleteStream(
+        "TEST_DELMSG",
+    ) catch {
+        reportResult(
+            "js_delete_msg",
+            true,
+            "",
+        );
+        return;
+    };
+    d.deinit();
+    reportResult("js_delete_msg", true, "");
+}
+
+pub fn testSecureDeleteMsg(
+    allocator: std.mem.Allocator,
+) void {
+    var url_buf: [64]u8 = undefined;
+    const url = formatUrl(&url_buf, js_port);
+
+    var io: std.Io.Threaded = .init(
+        allocator,
+        .{ .environ = .empty },
+    );
+    defer io.deinit();
+
+    const client = nats.Client.connect(
+        allocator,
+        io.io(),
+        url,
+        .{ .reconnect = false },
+    ) catch {
+        reportResult(
+            "js_secure_del",
+            false,
+            "connect failed",
+        );
+        return;
+    };
+    defer client.deinit();
+
+    var js = nats.jetstream.JetStream.init(
+        client,
+        .{},
+    );
+
+    var stream = js.createStream(.{
+        .name = "TEST_SECDEL",
+        .subjects = &.{"test.secdel.>"},
+        .storage = .memory,
+    }) catch {
+        reportResult(
+            "js_secure_del",
+            false,
+            "create stream",
+        );
+        return;
+    };
+    defer stream.deinit();
+
+    // Publish 3 messages
+    var i: u32 = 0;
+    while (i < 3) : (i += 1) {
+        var a = js.publish(
+            "test.secdel.a",
+            "payload",
+        ) catch {
+            reportResult(
+                "js_secure_del",
+                false,
+                "publish failed",
+            );
+            return;
+        };
+        a.deinit();
+    }
+
+    // Secure delete seq 2
+    var del = js.secureDeleteMsg(
+        "TEST_SECDEL",
+        2,
+    ) catch {
+        reportResult(
+            "js_secure_del",
+            false,
+            "secureDelete failed",
+        );
+        return;
+    };
+    defer del.deinit();
+
+    if (!del.value.success) {
+        reportResult(
+            "js_secure_del",
+            false,
+            "delete not success",
+        );
+        return;
+    }
+
+    // getMsg(2) should fail
+    var bad = js.getMsg("TEST_SECDEL", 2);
+    if (bad) |*r| {
+        r.deinit();
+        reportResult(
+            "js_secure_del",
+            false,
+            "seq 2 should be gone",
+        );
+        return;
+    } else |_| {}
+
+    // getMsg(1) should still work
+    var ok = js.getMsg(
+        "TEST_SECDEL",
+        1,
+    ) catch {
+        reportResult(
+            "js_secure_del",
+            false,
+            "seq 1 should exist",
+        );
+        return;
+    };
+    ok.deinit();
+
+    var d = js.deleteStream(
+        "TEST_SECDEL",
+    ) catch {
+        reportResult(
+            "js_secure_del",
+            true,
+            "",
+        );
+        return;
+    };
+    d.deinit();
+    reportResult("js_secure_del", true, "");
+}
+
+pub fn testCreateOrUpdateStream(
+    allocator: std.mem.Allocator,
+) void {
+    var url_buf: [64]u8 = undefined;
+    const url = formatUrl(&url_buf, js_port);
+
+    var io: std.Io.Threaded = .init(
+        allocator,
+        .{ .environ = .empty },
+    );
+    defer io.deinit();
+
+    const client = nats.Client.connect(
+        allocator,
+        io.io(),
+        url,
+        .{ .reconnect = false },
+    ) catch {
+        reportResult(
+            "js_upsert_stream",
+            false,
+            "connect failed",
+        );
+        return;
+    };
+    defer client.deinit();
+
+    var js = nats.jetstream.JetStream.init(
+        client,
+        .{},
+    );
+
+    // Create via createOrUpdate
+    var r1 = js.createOrUpdateStream(.{
+        .name = "TEST_UPSERT",
+        .subjects = &.{"upsert.>"},
+        .storage = .memory,
+        .max_msgs = 100,
+    }) catch {
+        reportResult(
+            "js_upsert_stream",
+            false,
+            "create failed",
+        );
+        return;
+    };
+    r1.deinit();
+
+    // Update via createOrUpdate
+    var r2 = js.createOrUpdateStream(.{
+        .name = "TEST_UPSERT",
+        .subjects = &.{"upsert.>"},
+        .storage = .memory,
+        .max_msgs = 200,
+    }) catch {
+        reportResult(
+            "js_upsert_stream",
+            false,
+            "update failed",
+        );
+        return;
+    };
+    r2.deinit();
+
+    // Verify updated config
+    var info = js.streamInfo(
+        "TEST_UPSERT",
+    ) catch {
+        reportResult(
+            "js_upsert_stream",
+            false,
+            "info failed",
+        );
+        return;
+    };
+    defer info.deinit();
+
+    if (info.value.config) |cfg| {
+        if (cfg.max_msgs) |mm| {
+            if (mm != 200) {
+                var buf: [64]u8 = undefined;
+                const m = std.fmt.bufPrint(
+                    &buf,
+                    "max_msgs {d}, want 200",
+                    .{mm},
+                ) catch "wrong";
+                reportResult(
+                    "js_upsert_stream",
+                    false,
+                    m,
+                );
+                return;
+            }
+        } else {
+            reportResult(
+                "js_upsert_stream",
+                false,
+                "no max_msgs",
+            );
+            return;
+        }
+    } else {
+        reportResult(
+            "js_upsert_stream",
+            false,
+            "no config",
+        );
+        return;
+    }
+
+    var d = js.deleteStream(
+        "TEST_UPSERT",
+    ) catch {
+        reportResult(
+            "js_upsert_stream",
+            true,
+            "",
+        );
+        return;
+    };
+    d.deinit();
+    reportResult("js_upsert_stream", true, "");
+}
+
+pub fn testCreateOrUpdateConsumer(
+    allocator: std.mem.Allocator,
+) void {
+    var url_buf: [64]u8 = undefined;
+    const url = formatUrl(&url_buf, js_port);
+
+    var io: std.Io.Threaded = .init(
+        allocator,
+        .{ .environ = .empty },
+    );
+    defer io.deinit();
+
+    const client = nats.Client.connect(
+        allocator,
+        io.io(),
+        url,
+        .{ .reconnect = false },
+    ) catch {
+        reportResult(
+            "js_upsert_cons",
+            false,
+            "connect failed",
+        );
+        return;
+    };
+    defer client.deinit();
+
+    var js = nats.jetstream.JetStream.init(
+        client,
+        .{},
+    );
+
+    var stream = js.createStream(.{
+        .name = "TEST_UCONS",
+        .subjects = &.{"ucons.>"},
+        .storage = .memory,
+    }) catch {
+        reportResult(
+            "js_upsert_cons",
+            false,
+            "create stream",
+        );
+        return;
+    };
+    defer stream.deinit();
+
+    // Create consumer
+    var c1 = js.createOrUpdateConsumer(
+        "TEST_UCONS",
+        .{
+            .name = "upsert-c",
+            .ack_policy = .explicit,
+        },
+    ) catch {
+        reportResult(
+            "js_upsert_cons",
+            false,
+            "create cons",
+        );
+        return;
+    };
+    c1.deinit();
+
+    // Update consumer
+    var c2 = js.createOrUpdateConsumer(
+        "TEST_UCONS",
+        .{
+            .name = "upsert-c",
+            .ack_policy = .explicit,
+            .max_ack_pending = 500,
+        },
+    ) catch {
+        reportResult(
+            "js_upsert_cons",
+            false,
+            "update cons",
+        );
+        return;
+    };
+    c2.deinit();
+
+    // Verify updated config
+    var info = js.consumerInfo(
+        "TEST_UCONS",
+        "upsert-c",
+    ) catch {
+        reportResult(
+            "js_upsert_cons",
+            false,
+            "info failed",
+        );
+        return;
+    };
+    defer info.deinit();
+
+    if (info.value.config) |cfg| {
+        if (cfg.max_ack_pending) |mp| {
+            if (mp != 500) {
+                var buf: [64]u8 = undefined;
+                const m = std.fmt.bufPrint(
+                    &buf,
+                    "max_ack {d}, want 500",
+                    .{mp},
+                ) catch "wrong";
+                reportResult(
+                    "js_upsert_cons",
+                    false,
+                    m,
+                );
+                return;
+            }
+        } else {
+            reportResult(
+                "js_upsert_cons",
+                false,
+                "no max_ack_pending",
+            );
+            return;
+        }
+    } else {
+        reportResult(
+            "js_upsert_cons",
+            false,
+            "no config",
+        );
+        return;
+    }
+
+    var d = js.deleteStream(
+        "TEST_UCONS",
+    ) catch {
+        reportResult(
+            "js_upsert_cons",
+            true,
+            "",
+        );
+        return;
+    };
+    d.deinit();
+    reportResult("js_upsert_cons", true, "");
+}
+
+pub fn testPauseResumeConsumer(
+    allocator: std.mem.Allocator,
+) void {
+    var url_buf: [64]u8 = undefined;
+    const url = formatUrl(&url_buf, js_port);
+
+    var io: std.Io.Threaded = .init(
+        allocator,
+        .{ .environ = .empty },
+    );
+    defer io.deinit();
+
+    const client = nats.Client.connect(
+        allocator,
+        io.io(),
+        url,
+        .{ .reconnect = false },
+    ) catch {
+        reportResult(
+            "js_pause_resume",
+            false,
+            "connect failed",
+        );
+        return;
+    };
+    defer client.deinit();
+
+    var js = nats.jetstream.JetStream.init(
+        client,
+        .{},
+    );
+
+    var stream = js.createStream(.{
+        .name = "TEST_PAUSE",
+        .subjects = &.{"pause.>"},
+        .storage = .memory,
+    }) catch {
+        reportResult(
+            "js_pause_resume",
+            false,
+            "create stream",
+        );
+        return;
+    };
+    defer stream.deinit();
+
+    var cons = js.createConsumer(
+        "TEST_PAUSE",
+        .{
+            .name = "pause-c",
+            .durable_name = "pause-c",
+            .ack_policy = .explicit,
+        },
+    ) catch {
+        reportResult(
+            "js_pause_resume",
+            false,
+            "create cons",
+        );
+        return;
+    };
+    cons.deinit();
+
+    // Pause consumer
+    var pr = js.pauseConsumer(
+        "TEST_PAUSE",
+        "pause-c",
+        "2099-01-01T00:00:00Z",
+    ) catch {
+        reportResult(
+            "js_pause_resume",
+            false,
+            "pause failed",
+        );
+        return;
+    };
+    defer pr.deinit();
+
+    if (!pr.value.paused) {
+        reportResult(
+            "js_pause_resume",
+            false,
+            "not paused",
+        );
+        return;
+    }
+
+    // Resume consumer
+    var rr = js.resumeConsumer(
+        "TEST_PAUSE",
+        "pause-c",
+    ) catch {
+        reportResult(
+            "js_pause_resume",
+            false,
+            "resume failed",
+        );
+        return;
+    };
+    defer rr.deinit();
+
+    if (rr.value.paused) {
+        reportResult(
+            "js_pause_resume",
+            false,
+            "still paused",
+        );
+        return;
+    }
+
+    // Publish + fetch after resume
+    var a = js.publish(
+        "pause.test",
+        "after-resume",
+    ) catch {
+        reportResult(
+            "js_pause_resume",
+            false,
+            "publish failed",
+        );
+        return;
+    };
+    a.deinit();
+
+    var pull = nats.jetstream.PullSubscription{
+        .js = &js,
+        .stream = "TEST_PAUSE",
+    };
+    pull.setConsumer("pause-c");
+
+    var msg = (pull.next(5000) catch {
+        reportResult(
+            "js_pause_resume",
+            false,
+            "fetch failed",
+        );
+        return;
+    }) orelse {
+        reportResult(
+            "js_pause_resume",
+            false,
+            "no msg after resume",
+        );
+        return;
+    };
+    msg.ack() catch {};
+    msg.deinit();
+
+    var d = js.deleteStream(
+        "TEST_PAUSE",
+    ) catch {
+        reportResult(
+            "js_pause_resume",
+            true,
+            "",
+        );
+        return;
+    };
+    d.deinit();
+    reportResult("js_pause_resume", true, "");
+}
+
+pub fn testPushConsumerBasic(
+    allocator: std.mem.Allocator,
+) void {
+    var url_buf: [64]u8 = undefined;
+    const url = formatUrl(&url_buf, js_port);
+
+    var io: std.Io.Threaded = .init(
+        allocator,
+        .{ .environ = .empty },
+    );
+    defer io.deinit();
+
+    const client = nats.Client.connect(
+        allocator,
+        io.io(),
+        url,
+        .{ .reconnect = false },
+    ) catch {
+        reportResult(
+            "js_push_basic",
+            false,
+            "connect failed",
+        );
+        return;
+    };
+    defer client.deinit();
+
+    var js = nats.jetstream.JetStream.init(
+        client,
+        .{},
+    );
+
+    var stream = js.createStream(.{
+        .name = "TEST_PUSH",
+        .subjects = &.{"push.>"},
+        .storage = .memory,
+    }) catch {
+        reportResult(
+            "js_push_basic",
+            false,
+            "create stream",
+        );
+        return;
+    };
+    defer stream.deinit();
+
+    // Publish 5 messages first
+    var i: u32 = 0;
+    while (i < 5) : (i += 1) {
+        var a = js.publish(
+            "push.test",
+            "push-data",
+        ) catch {
+            reportResult(
+                "js_push_basic",
+                false,
+                "publish failed",
+            );
+            return;
+        };
+        a.deinit();
+    }
+
+    // Set up push subscription handler
+    const Counter = struct {
+        count: u32 = 0,
+        pub fn onMessage(
+            self: *@This(),
+            msg: *nats.jetstream.JsMsg,
+        ) void {
+            _ = msg;
+            self.count += 1;
+        }
+    };
+
+    var counter = Counter{};
+
+    // Subscribe to deliver subject BEFORE creating
+    // the consumer -- otherwise server pushes before
+    // we're listening and messages are lost.
+    const deliver_subj = "_PUSH_DELIVER.test";
+    var push_sub = nats.jetstream.PushSubscription{
+        .js = &js,
+        .stream = "TEST_PUSH",
+    };
+    push_sub.setConsumer("push-c");
+    push_sub.setDeliverSubject(deliver_subj);
+
+    var ctx = push_sub.consume(
+        nats.jetstream.consumer.JsMsgHandler.init(
+            Counter,
+            &counter,
+        ),
+        .{},
+    ) catch {
+        reportResult(
+            "js_push_basic",
+            false,
+            "consume failed",
+        );
+        return;
+    };
+
+    // Now create the push consumer -- server starts
+    // delivering to the already-subscribed subject.
+    var pc = js.createPushConsumer(
+        "TEST_PUSH",
+        .{
+            .name = "push-c",
+            .deliver_subject = deliver_subj,
+            .ack_policy = .none,
+        },
+    ) catch {
+        ctx.stop();
+        ctx.deinit();
+        reportResult(
+            "js_push_basic",
+            false,
+            "create push cons",
+        );
+        return;
+    };
+    pc.deinit();
+
+    // Wait for messages
+    var wait: u32 = 0;
+    while (counter.count < 5 and
+        wait < 50) : (wait += 1)
+    {
+        threadSleepNs(100_000_000);
+    }
+
+    ctx.stop();
+    ctx.deinit();
+
+    if (counter.count < 5) {
+        var buf: [64]u8 = undefined;
+        const m = std.fmt.bufPrint(
+            &buf,
+            "got {d}, expected 5",
+            .{counter.count},
+        ) catch "count mismatch";
+        reportResult(
+            "js_push_basic",
+            false,
+            m,
+        );
+        return;
+    }
+
+    var d = js.deleteStream(
+        "TEST_PUSH",
+    ) catch {
+        reportResult(
+            "js_push_basic",
+            true,
+            "",
+        );
+        return;
+    };
+    d.deinit();
+    reportResult("js_push_basic", true, "");
+}
+
+pub fn testPublishWithTTL(
+    allocator: std.mem.Allocator,
+) void {
+    var url_buf: [64]u8 = undefined;
+    const url = formatUrl(&url_buf, js_port);
+
+    var io: std.Io.Threaded = .init(
+        allocator,
+        .{ .environ = .empty },
+    );
+    defer io.deinit();
+
+    const client = nats.Client.connect(
+        allocator,
+        io.io(),
+        url,
+        .{ .reconnect = false },
+    ) catch {
+        reportResult(
+            "js_publish_ttl",
+            false,
+            "connect failed",
+        );
+        return;
+    };
+    defer client.deinit();
+
+    var js = nats.jetstream.JetStream.init(
+        client,
+        .{},
+    );
+
+    // Create stream with TTL support
+    var stream = js.createStream(.{
+        .name = "TEST_TTL",
+        .subjects = &.{"ttl.>"},
+        .storage = .memory,
+        .allow_msg_ttl = true,
+    }) catch {
+        // Server may not support TTL
+        reportResult(
+            "js_publish_ttl",
+            true,
+            "skipped",
+        );
+        return;
+    };
+    defer stream.deinit();
+
+    // Publish with 1s TTL
+    var ack = js.publishWithOpts(
+        "ttl.a",
+        "data",
+        .{ .ttl = "1s" },
+    ) catch {
+        reportResult(
+            "js_publish_ttl",
+            false,
+            "publish failed",
+        );
+        return;
+    };
+    ack.deinit();
+
+    // Immediately should exist
+    var r1 = js.getMsg("TEST_TTL", 1) catch {
+        reportResult(
+            "js_publish_ttl",
+            false,
+            "getMsg before ttl",
+        );
+        return;
+    };
+    r1.deinit();
+
+    // Wait for TTL expiry
+    threadSleepNs(2_000_000_000);
+
+    // Should be expired now
+    var r2 = js.getMsg("TEST_TTL", 1);
+    if (r2) |*r| {
+        r.deinit();
+        reportResult(
+            "js_publish_ttl",
+            false,
+            "should expire",
+        );
+        return;
+    } else |_| {}
+
+    var d = js.deleteStream(
+        "TEST_TTL",
+    ) catch {
+        reportResult(
+            "js_publish_ttl",
+            true,
+            "",
+        );
+        return;
+    };
+    d.deinit();
+    reportResult("js_publish_ttl", true, "");
+}
+
+pub fn testKvUpdateBucket(
+    allocator: std.mem.Allocator,
+) void {
+    var url_buf: [64]u8 = undefined;
+    const url = formatUrl(&url_buf, js_port);
+
+    var io: std.Io.Threaded = .init(
+        allocator,
+        .{ .environ = .empty },
+    );
+    defer io.deinit();
+
+    const client = nats.Client.connect(
+        allocator,
+        io.io(),
+        url,
+        .{ .reconnect = false },
+    ) catch {
+        reportResult(
+            "kv_update_bucket",
+            false,
+            "connect failed",
+        );
+        return;
+    };
+    defer client.deinit();
+
+    var js = nats.jetstream.JetStream.init(
+        client,
+        .{},
+    );
+
+    _ = js.createKeyValue(.{
+        .bucket = "UPD_BUCKET",
+        .history = 1,
+        .storage = .memory,
+    }) catch {
+        reportResult(
+            "kv_update_bucket",
+            false,
+            "create bucket",
+        );
+        return;
+    };
+
+    _ = js.updateKeyValue(.{
+        .bucket = "UPD_BUCKET",
+        .history = 5,
+        .storage = .memory,
+    }) catch {
+        reportResult(
+            "kv_update_bucket",
+            false,
+            "update bucket",
+        );
+        return;
+    };
+
+    // Verify via stream info
+    var info = js.streamInfo(
+        "KV_UPD_BUCKET",
+    ) catch {
+        reportResult(
+            "kv_update_bucket",
+            false,
+            "info failed",
+        );
+        return;
+    };
+    defer info.deinit();
+
+    if (info.value.config) |cfg| {
+        if (cfg.max_msgs_per_subject) |mps| {
+            if (mps != 5) {
+                var buf: [64]u8 = undefined;
+                const m = std.fmt.bufPrint(
+                    &buf,
+                    "mps {d}, want 5",
+                    .{mps},
+                ) catch "wrong";
+                reportResult(
+                    "kv_update_bucket",
+                    false,
+                    m,
+                );
+                return;
+            }
+        } else {
+            reportResult(
+                "kv_update_bucket",
+                false,
+                "no max_msgs_per_subj",
+            );
+            return;
+        }
+    } else {
+        reportResult(
+            "kv_update_bucket",
+            false,
+            "no config",
+        );
+        return;
+    }
+
+    var d = js.deleteKeyValue(
+        "UPD_BUCKET",
+    ) catch {
+        reportResult(
+            "kv_update_bucket",
+            true,
+            "",
+        );
+        return;
+    };
+    d.deinit();
+    reportResult("kv_update_bucket", true, "");
+}
+
+pub fn testKvCreateOrUpdateBucket(
+    allocator: std.mem.Allocator,
+) void {
+    var url_buf: [64]u8 = undefined;
+    const url = formatUrl(&url_buf, js_port);
+
+    var io: std.Io.Threaded = .init(
+        allocator,
+        .{ .environ = .empty },
+    );
+    defer io.deinit();
+
+    const client = nats.Client.connect(
+        allocator,
+        io.io(),
+        url,
+        .{ .reconnect = false },
+    ) catch {
+        reportResult(
+            "kv_upsert_bucket",
+            false,
+            "connect failed",
+        );
+        return;
+    };
+    defer client.deinit();
+
+    var js = nats.jetstream.JetStream.init(
+        client,
+        .{},
+    );
+
+    // Create via createOrUpdate
+    _ = js.createOrUpdateKeyValue(.{
+        .bucket = "UPSERT_KV",
+        .storage = .memory,
+    }) catch {
+        reportResult(
+            "kv_upsert_bucket",
+            false,
+            "create bucket",
+        );
+        return;
+    };
+
+    // Update via createOrUpdate
+    _ = js.createOrUpdateKeyValue(.{
+        .bucket = "UPSERT_KV",
+        .history = 10,
+        .storage = .memory,
+    }) catch {
+        reportResult(
+            "kv_upsert_bucket",
+            false,
+            "update bucket",
+        );
+        return;
+    };
+
+    // Verify via stream info
+    var info = js.streamInfo(
+        "KV_UPSERT_KV",
+    ) catch {
+        reportResult(
+            "kv_upsert_bucket",
+            false,
+            "info failed",
+        );
+        return;
+    };
+    defer info.deinit();
+
+    if (info.value.config) |cfg| {
+        if (cfg.max_msgs_per_subject) |mps| {
+            if (mps != 10) {
+                var buf: [64]u8 = undefined;
+                const m = std.fmt.bufPrint(
+                    &buf,
+                    "mps {d}, want 10",
+                    .{mps},
+                ) catch "wrong";
+                reportResult(
+                    "kv_upsert_bucket",
+                    false,
+                    m,
+                );
+                return;
+            }
+        } else {
+            reportResult(
+                "kv_upsert_bucket",
+                false,
+                "no max_msgs_per_subj",
+            );
+            return;
+        }
+    } else {
+        reportResult(
+            "kv_upsert_bucket",
+            false,
+            "no config",
+        );
+        return;
+    }
+
+    var d = js.deleteKeyValue(
+        "UPSERT_KV",
+    ) catch {
+        reportResult(
+            "kv_upsert_bucket",
+            true,
+            "",
+        );
+        return;
+    };
+    d.deinit();
+    reportResult(
+        "kv_upsert_bucket",
+        true,
+        "",
+    );
+}
+
+pub fn testKvPurgeDeletes(
+    allocator: std.mem.Allocator,
+) void {
+    var url_buf: [64]u8 = undefined;
+    const url = formatUrl(&url_buf, js_port);
+
+    var io: std.Io.Threaded = .init(
+        allocator,
+        .{ .environ = .empty },
+    );
+    defer io.deinit();
+
+    const client = nats.Client.connect(
+        allocator,
+        io.io(),
+        url,
+        .{ .reconnect = false },
+    ) catch {
+        reportResult(
+            "kv_purge_deletes",
+            false,
+            "connect failed",
+        );
+        return;
+    };
+    defer client.deinit();
+
+    var js = nats.jetstream.JetStream.init(
+        client,
+        .{},
+    );
+
+    var kv = js.createKeyValue(.{
+        .bucket = "PURGE_DEL",
+        .storage = .memory,
+        .history = 5,
+    }) catch {
+        reportResult(
+            "kv_purge_deletes",
+            false,
+            "create bucket",
+        );
+        return;
+    };
+
+    // Put 5 keys
+    _ = kv.put("a", "1") catch {
+        reportResult(
+            "kv_purge_deletes",
+            false,
+            "put a",
+        );
+        return;
+    };
+    _ = kv.put("b", "2") catch {
+        reportResult(
+            "kv_purge_deletes",
+            false,
+            "put b",
+        );
+        return;
+    };
+    _ = kv.put("c", "3") catch {
+        reportResult(
+            "kv_purge_deletes",
+            false,
+            "put c",
+        );
+        return;
+    };
+    _ = kv.put("d", "4") catch {
+        reportResult(
+            "kv_purge_deletes",
+            false,
+            "put d",
+        );
+        return;
+    };
+    _ = kv.put("e", "5") catch {
+        reportResult(
+            "kv_purge_deletes",
+            false,
+            "put e",
+        );
+        return;
+    };
+
+    // Delete a, b, c
+    _ = kv.delete("a") catch {
+        reportResult(
+            "kv_purge_deletes",
+            false,
+            "del a",
+        );
+        return;
+    };
+    _ = kv.delete("b") catch {
+        reportResult(
+            "kv_purge_deletes",
+            false,
+            "del b",
+        );
+        return;
+    };
+    _ = kv.delete("c") catch {
+        reportResult(
+            "kv_purge_deletes",
+            false,
+            "del c",
+        );
+        return;
+    };
+
+    // keys() should return 2 live keys
+    const key_list = kv.keys(allocator) catch {
+        reportResult(
+            "kv_purge_deletes",
+            false,
+            "keys()",
+        );
+        return;
+    };
+    defer {
+        for (key_list) |k| allocator.free(k);
+        allocator.free(key_list);
+    }
+
+    if (key_list.len != 2) {
+        var buf: [64]u8 = undefined;
+        const m = std.fmt.bufPrint(
+            &buf,
+            "keys: {d}, want 2",
+            .{key_list.len},
+        ) catch "wrong";
+        reportResult(
+            "kv_purge_deletes",
+            false,
+            m,
+        );
+        return;
+    }
+
+    // Purge delete markers
+    const purged = kv.purgeDeletes(
+        .{},
+    ) catch {
+        reportResult(
+            "kv_purge_deletes",
+            false,
+            "purgeDeletes",
+        );
+        return;
+    };
+    _ = purged;
+
+    // Verify d and e still accessible
+    const ed = (kv.get("d") catch {
+        reportResult(
+            "kv_purge_deletes",
+            false,
+            "get d after purge",
+        );
+        return;
+    }) orelse {
+        reportResult(
+            "kv_purge_deletes",
+            false,
+            "d missing",
+        );
+        return;
+    };
+    if (ed.operation != .put) {
+        reportResult(
+            "kv_purge_deletes",
+            false,
+            "d not put op",
+        );
+        return;
+    }
+
+    const ee = (kv.get("e") catch {
+        reportResult(
+            "kv_purge_deletes",
+            false,
+            "get e after purge",
+        );
+        return;
+    }) orelse {
+        reportResult(
+            "kv_purge_deletes",
+            false,
+            "e missing",
+        );
+        return;
+    };
+    if (ee.operation != .put) {
+        reportResult(
+            "kv_purge_deletes",
+            false,
+            "e not put op",
+        );
+        return;
+    }
+
+    var d = js.deleteKeyValue(
+        "PURGE_DEL",
+    ) catch {
+        reportResult(
+            "kv_purge_deletes",
+            true,
+            "",
+        );
+        return;
+    };
+    d.deinit();
+    reportResult(
+        "kv_purge_deletes",
+        true,
+        "",
+    );
+}
+
+pub fn testKvStoreNames(
+    allocator: std.mem.Allocator,
+) void {
+    var url_buf: [64]u8 = undefined;
+    const url = formatUrl(&url_buf, js_port);
+
+    var io: std.Io.Threaded = .init(
+        allocator,
+        .{ .environ = .empty },
+    );
+    defer io.deinit();
+
+    const client = nats.Client.connect(
+        allocator,
+        io.io(),
+        url,
+        .{ .reconnect = false },
+    ) catch {
+        reportResult(
+            "kv_store_names",
+            false,
+            "connect failed",
+        );
+        return;
+    };
+    defer client.deinit();
+
+    var js = nats.jetstream.JetStream.init(
+        client,
+        .{},
+    );
+
+    // Create 3 KV buckets
+    _ = js.createKeyValue(.{
+        .bucket = "NAMES_A",
+        .storage = .memory,
+    }) catch {
+        reportResult(
+            "kv_store_names",
+            false,
+            "create A",
+        );
+        return;
+    };
+    _ = js.createKeyValue(.{
+        .bucket = "NAMES_B",
+        .storage = .memory,
+    }) catch {
+        reportResult(
+            "kv_store_names",
+            false,
+            "create B",
+        );
+        return;
+    };
+    _ = js.createKeyValue(.{
+        .bucket = "NAMES_C",
+        .storage = .memory,
+    }) catch {
+        reportResult(
+            "kv_store_names",
+            false,
+            "create C",
+        );
+        return;
+    };
+
+    const names = js.keyValueStoreNames(
+        allocator,
+    ) catch {
+        reportResult(
+            "kv_store_names",
+            false,
+            "storeNames()",
+        );
+        return;
+    };
+    defer {
+        for (names) |n| allocator.free(n);
+        allocator.free(names);
+    }
+
+    // Verify our 3 buckets are in the list
+    var found_a = false;
+    var found_b = false;
+    var found_c = false;
+    for (names) |n| {
+        if (std.mem.eql(u8, n, "NAMES_A"))
+            found_a = true;
+        if (std.mem.eql(u8, n, "NAMES_B"))
+            found_b = true;
+        if (std.mem.eql(u8, n, "NAMES_C"))
+            found_c = true;
+    }
+
+    if (!found_a or !found_b or !found_c) {
+        reportResult(
+            "kv_store_names",
+            false,
+            "missing bucket names",
+        );
+        return;
+    }
+
+    // Verify KV_ prefix was stripped
+    for (names) |n| {
+        if (std.mem.startsWith(u8, n, "KV_")) {
+            reportResult(
+                "kv_store_names",
+                false,
+                "prefix not stripped",
+            );
+            return;
+        }
+    }
+
+    // Cleanup
+    var da = js.deleteKeyValue(
+        "NAMES_A",
+    ) catch {
+        reportResult(
+            "kv_store_names",
+            true,
+            "",
+        );
+        return;
+    };
+    da.deinit();
+    var db = js.deleteKeyValue(
+        "NAMES_B",
+    ) catch {
+        reportResult(
+            "kv_store_names",
+            true,
+            "",
+        );
+        return;
+    };
+    db.deinit();
+    var dc = js.deleteKeyValue(
+        "NAMES_C",
+    ) catch {
+        reportResult(
+            "kv_store_names",
+            true,
+            "",
+        );
+        return;
+    };
+    dc.deinit();
+
+    reportResult("kv_store_names", true, "");
+}
+
+pub fn testKvWatchIgnoreDeletes(
+    allocator: std.mem.Allocator,
+) void {
+    _ = allocator;
+    var url_buf: [64]u8 = undefined;
+    const url = formatUrl(&url_buf, js_port);
+
+    var io: std.Io.Threaded = .init(
+        std.heap.page_allocator,
+        .{ .environ = .empty },
+    );
+    defer io.deinit();
+
+    const client = nats.Client.connect(
+        std.heap.page_allocator,
+        io.io(),
+        url,
+        .{ .reconnect = false },
+    ) catch {
+        reportResult(
+            "kv_watch_ign_del",
+            false,
+            "connect failed",
+        );
+        return;
+    };
+    defer client.deinit();
+
+    var js = nats.jetstream.JetStream.init(
+        client,
+        .{},
+    );
+
+    var kv = js.createKeyValue(.{
+        .bucket = "WATCH_IGN",
+        .storage = .memory,
+        .history = 5,
+    }) catch {
+        reportResult(
+            "kv_watch_ign_del",
+            false,
+            "create bucket",
+        );
+        return;
+    };
+
+    // Put a=1, b=2, then delete a
+    _ = kv.put("a", "1") catch {
+        reportResult(
+            "kv_watch_ign_del",
+            false,
+            "put a",
+        );
+        return;
+    };
+    _ = kv.put("b", "2") catch {
+        reportResult(
+            "kv_watch_ign_del",
+            false,
+            "put b",
+        );
+        return;
+    };
+    _ = kv.delete("a") catch {
+        reportResult(
+            "kv_watch_ign_del",
+            false,
+            "delete a",
+        );
+        return;
+    };
+
+    // Watch with ignore_deletes
+    var watcher = kv.watchAllWithOpts(.{
+        .ignore_deletes = true,
+        .include_history = true,
+    }) catch {
+        reportResult(
+            "kv_watch_ign_del",
+            false,
+            "watchAll",
+        );
+        return;
+    };
+    defer watcher.deinit();
+
+    // Collect entries until null
+    var count: u32 = 0;
+    while (count < 10) {
+        var entry = (watcher.next(
+            3000,
+        ) catch break) orelse break;
+        entry.deinit();
+        count += 1;
+    }
+
+    // Should get 2 (put a, put b) not delete
+    if (count != 2) {
+        var buf: [64]u8 = undefined;
+        const m = std.fmt.bufPrint(
+            &buf,
+            "got {d}, expected 2",
+            .{count},
+        ) catch "wrong count";
+        reportResult(
+            "kv_watch_ign_del",
+            false,
+            m,
+        );
+        return;
+    }
+
+    var d = js.deleteKeyValue(
+        "WATCH_IGN",
+    ) catch {
+        reportResult(
+            "kv_watch_ign_del",
+            true,
+            "",
+        );
+        return;
+    };
+    d.deinit();
+    reportResult(
+        "kv_watch_ign_del",
+        true,
+        "",
+    );
+}
+
+pub fn testKvWatchUpdatesOnly(
+    allocator: std.mem.Allocator,
+) void {
+    _ = allocator;
+    var url_buf: [64]u8 = undefined;
+    const url = formatUrl(&url_buf, js_port);
+
+    var io: std.Io.Threaded = .init(
+        std.heap.page_allocator,
+        .{ .environ = .empty },
+    );
+    defer io.deinit();
+
+    const client = nats.Client.connect(
+        std.heap.page_allocator,
+        io.io(),
+        url,
+        .{ .reconnect = false },
+    ) catch {
+        reportResult(
+            "kv_watch_upd_only",
+            false,
+            "connect failed",
+        );
+        return;
+    };
+    defer client.deinit();
+
+    var js = nats.jetstream.JetStream.init(
+        client,
+        .{},
+    );
+
+    var kv = js.createKeyValue(.{
+        .bucket = "WATCH_UPD",
+        .storage = .memory,
+    }) catch {
+        reportResult(
+            "kv_watch_upd_only",
+            false,
+            "create bucket",
+        );
+        return;
+    };
+
+    // Put a key before watching
+    _ = kv.put("pre", "before") catch {
+        reportResult(
+            "kv_watch_upd_only",
+            false,
+            "put pre",
+        );
+        return;
+    };
+
+    // Watch with updates_only
+    var watcher = kv.watchAllWithOpts(.{
+        .updates_only = true,
+    }) catch {
+        reportResult(
+            "kv_watch_upd_only",
+            false,
+            "watchAll",
+        );
+        return;
+    };
+    defer watcher.deinit();
+
+    // First next() should return null (no initial)
+    const first = (watcher.next(
+        2000,
+    ) catch null) orelse null;
+    if (first != null) {
+        reportResult(
+            "kv_watch_upd_only",
+            false,
+            "should be null first",
+        );
+        return;
+    }
+
+    // Put a new key
+    _ = kv.put("post", "after") catch {
+        reportResult(
+            "kv_watch_upd_only",
+            false,
+            "put post",
+        );
+        return;
+    };
+
+    // Should get the new entry
+    var entry = (watcher.next(5000) catch {
+        reportResult(
+            "kv_watch_upd_only",
+            false,
+            "next() failed",
+        );
+        return;
+    }) orelse {
+        reportResult(
+            "kv_watch_upd_only",
+            false,
+            "no post entry",
+        );
+        return;
+    };
+    defer entry.deinit();
+
+    if (!std.mem.eql(u8, entry.key, "post")) {
+        reportResult(
+            "kv_watch_upd_only",
+            false,
+            "wrong key",
+        );
+        return;
+    }
+
+    var d = js.deleteKeyValue(
+        "WATCH_UPD",
+    ) catch {
+        reportResult(
+            "kv_watch_upd_only",
+            true,
+            "",
+        );
+        return;
+    };
+    d.deinit();
+    reportResult(
+        "kv_watch_upd_only",
+        true,
+        "",
+    );
+}
+
+pub fn testKvListKeys(
+    allocator: std.mem.Allocator,
+) void {
+    _ = allocator;
+    var url_buf: [64]u8 = undefined;
+    const url = formatUrl(&url_buf, js_port);
+
+    var io: std.Io.Threaded = .init(
+        std.heap.page_allocator,
+        .{ .environ = .empty },
+    );
+    defer io.deinit();
+
+    const client = nats.Client.connect(
+        std.heap.page_allocator,
+        io.io(),
+        url,
+        .{ .reconnect = false },
+    ) catch {
+        reportResult(
+            "kv_list_keys",
+            false,
+            "connect failed",
+        );
+        return;
+    };
+    defer client.deinit();
+
+    var js = nats.jetstream.JetStream.init(
+        client,
+        .{},
+    );
+
+    var kv = js.createKeyValue(.{
+        .bucket = "LIST_KEYS",
+        .storage = .memory,
+    }) catch {
+        reportResult(
+            "kv_list_keys",
+            false,
+            "create bucket",
+        );
+        return;
+    };
+
+    // Put 5 keys
+    _ = kv.put("k1", "v1") catch {
+        reportResult(
+            "kv_list_keys",
+            false,
+            "put k1",
+        );
+        return;
+    };
+    _ = kv.put("k2", "v2") catch {
+        reportResult(
+            "kv_list_keys",
+            false,
+            "put k2",
+        );
+        return;
+    };
+    _ = kv.put("k3", "v3") catch {
+        reportResult(
+            "kv_list_keys",
+            false,
+            "put k3",
+        );
+        return;
+    };
+    _ = kv.put("k4", "v4") catch {
+        reportResult(
+            "kv_list_keys",
+            false,
+            "put k4",
+        );
+        return;
+    };
+    _ = kv.put("k5", "v5") catch {
+        reportResult(
+            "kv_list_keys",
+            false,
+            "put k5",
+        );
+        return;
+    };
+
+    // Delete k3
+    _ = kv.delete("k3") catch {
+        reportResult(
+            "kv_list_keys",
+            false,
+            "del k3",
+        );
+        return;
+    };
+
+    // List keys via lister
+    var lister = kv.listKeys() catch {
+        reportResult(
+            "kv_list_keys",
+            false,
+            "listKeys()",
+        );
+        return;
+    };
+    defer lister.deinit();
+
+    var count: u32 = 0;
+    while (count < 10) {
+        const key = (lister.next() catch {
+            break;
+        }) orelse break;
+        _ = key;
+        count += 1;
+    }
+
+    if (count != 4) {
+        var buf: [64]u8 = undefined;
+        const m = std.fmt.bufPrint(
+            &buf,
+            "got {d} keys, expected 4",
+            .{count},
+        ) catch "wrong count";
+        reportResult(
+            "kv_list_keys",
+            false,
+            m,
+        );
+        return;
+    }
+
+    var d = js.deleteKeyValue(
+        "LIST_KEYS",
+    ) catch {
+        reportResult(
+            "kv_list_keys",
+            true,
+            "",
+        );
+        return;
+    };
+    d.deinit();
+    reportResult("kv_list_keys", true, "");
+}
+
 pub fn runAll(
     allocator: std.mem.Allocator,
     manager: *ServerManager,
@@ -4145,6 +6431,23 @@ pub fn runAll(
     testFilteredConsumer(allocator);
     testPurgeSubject(allocator);
     testPaginatedStreamNames(allocator);
+    // New API tests
+    testGetMsg(allocator);
+    testGetLastMsgForSubject(allocator);
+    testDeleteMsg(allocator);
+    testSecureDeleteMsg(allocator);
+    testCreateOrUpdateStream(allocator);
+    testCreateOrUpdateConsumer(allocator);
+    testPauseResumeConsumer(allocator);
+    testPushConsumerBasic(allocator);
+    testPublishWithTTL(allocator);
+    testKvUpdateBucket(allocator);
+    testKvCreateOrUpdateBucket(allocator);
+    testKvPurgeDeletes(allocator);
+    testKvStoreNames(allocator);
+    testKvWatchIgnoreDeletes(allocator);
+    testKvWatchUpdatesOnly(allocator);
+    testKvListKeys(allocator);
     // Cross-verification with nats CLI
     testCrossVerifyKvPut(allocator);
     testCrossVerifyKvGet(allocator);

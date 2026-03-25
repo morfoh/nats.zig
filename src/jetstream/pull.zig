@@ -518,7 +518,7 @@ fn consumeDrainTask(
 ) void {
     defer {
         sub.deinit();
-        ctx.state = .stopped;
+        ctx._state.store(.stopped, .release);
     }
 
     var hb: ?HeartbeatMonitor = if (opts.heartbeat_ms > 0)
@@ -532,14 +532,14 @@ fn consumeDrainTask(
 
     var delivered: u32 = 0;
 
-    while (ctx.state == .running or
-        ctx.state == .draining)
+    while (ctx.state() == .running or
+        ctx.state() == .draining)
     {
         const maybe = sub.nextMsgTimeout(
             recv_ms,
         ) catch |err| {
             if (opts.err_handler) |eh| eh(err);
-            if (ctx.state == .draining) break;
+            if (ctx.state() == .draining) break;
             issuePull(
                 js,
                 client,
@@ -551,7 +551,7 @@ fn consumeDrainTask(
             continue;
         };
         const msg = maybe orelse {
-            if (ctx.state == .draining) break;
+            if (ctx.state() == .draining) break;
             // Check heartbeat
             if (hb) |*h| {
                 if (h.recordTimeout()) {
@@ -588,7 +588,7 @@ fn consumeDrainTask(
             msg.deinit();
             switch (code) {
                 404, 408 => {
-                    if (ctx.state == .draining) break;
+                    if (ctx.state() == .draining) break;
                     // Re-issue pull (batch expired)
                     issuePull(
                         js,

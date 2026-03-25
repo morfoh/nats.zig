@@ -34,6 +34,11 @@ pub const DeliverPolicy = enum {
 pub const AckPolicy = enum { none, all, explicit };
 pub const ReplayPolicy = enum { instant, original };
 
+pub const SubjectTransform = struct {
+    src: ?[]const u8 = null,
+    dest: ?[]const u8 = null,
+};
+
 // -- Stream types --
 
 pub const StreamConfig = struct {
@@ -61,6 +66,9 @@ pub const StreamConfig = struct {
     mirror_direct: ?bool = null,
     compression: ?StoreCompression = null,
     first_seq: ?u64 = null,
+    allow_msg_ttl: ?bool = null,
+    metadata: ?std.json.Value = null,
+    subject_transform: ?SubjectTransform = null,
 };
 
 pub const StreamState = struct {
@@ -153,6 +161,7 @@ pub const PublishOpts = struct {
     expected_last_seq: ?u64 = null,
     expected_last_msg_id: ?[]const u8 = null,
     expected_last_subj_seq: ?u64 = null,
+    ttl: ?[]const u8 = null,
 };
 
 // -- Pull types --
@@ -247,6 +256,20 @@ pub const KeyValueConfig = struct {
 
 pub const KeyValueOp = enum { put, delete, purge };
 
+/// Options for KV watch operations.
+pub const WatchOpts = struct {
+    /// Deliver all historical values, not just latest.
+    include_history: bool = false,
+    /// Skip entries with delete/purge markers.
+    ignore_deletes: bool = false,
+    /// Only deliver new updates, skip initial values.
+    updates_only: bool = false,
+    /// Only deliver metadata, not values.
+    meta_only: bool = false,
+    /// Resume watching from a specific revision.
+    resume_from_revision: ?u64 = null,
+};
+
 pub const KeyValueEntry = struct {
     bucket: []const u8,
     key: []const u8,
@@ -284,6 +307,27 @@ pub const StoredMsg = struct {
     data: ?[]const u8 = null,
     hdrs: ?[]const u8 = null,
     time: ?[]const u8 = null,
+};
+
+// -- Stream MSG.DELETE types --
+
+pub const MsgDeleteRequest = struct {
+    seq: u64,
+    no_erase: ?bool = null,
+};
+
+// -- Consumer pause types --
+
+pub const ConsumerPauseRequest = struct {
+    pause_until: ?[]const u8 = null,
+};
+
+pub const ConsumerPauseResponse = struct {
+    type: ?[]const u8 = null,
+    @"error": ?ApiErrorJson = null,
+    paused: bool = false,
+    pause_until: ?[]const u8 = null,
+    pause_remaining: ?i64 = null,
 };
 
 // -- Account info --
@@ -547,5 +591,142 @@ test "ConsumerConfig with push fields serializes" {
     try std.testing.expectEqualStrings(
         "deliver.test",
         parsed.value.deliver_subject.?,
+    );
+}
+
+test "MsgDeleteRequest serialization" {
+    const alloc = std.testing.allocator;
+    // With no_erase
+    const json1 = try jsonStringify(alloc, MsgDeleteRequest{
+        .seq = 42,
+        .no_erase = true,
+    });
+    defer alloc.free(json1);
+    try std.testing.expect(
+        std.mem.indexOf(u8, json1, "\"seq\":42") != null,
+    );
+    try std.testing.expect(
+        std.mem.indexOf(u8, json1, "no_erase") != null,
+    );
+
+    // Without no_erase (null omitted)
+    const json2 = try jsonStringify(
+        alloc,
+        MsgDeleteRequest{ .seq = 7 },
+    );
+    defer alloc.free(json2);
+    try std.testing.expect(
+        std.mem.indexOf(u8, json2, "no_erase") == null,
+    );
+    try std.testing.expect(
+        std.mem.indexOf(u8, json2, "\"seq\":7") != null,
+    );
+}
+
+test "ConsumerPauseRequest serialization" {
+    const alloc = std.testing.allocator;
+    const json1 = try jsonStringify(
+        alloc,
+        ConsumerPauseRequest{
+            .pause_until = "2026-04-01T00:00:00Z",
+        },
+    );
+    defer alloc.free(json1);
+    try std.testing.expect(
+        std.mem.indexOf(u8, json1, "pause_until") !=
+            null,
+    );
+
+    const json2 = try jsonStringify(
+        alloc,
+        ConsumerPauseRequest{},
+    );
+    defer alloc.free(json2);
+    try std.testing.expect(
+        std.mem.indexOf(u8, json2, "pause_until") ==
+            null,
+    );
+}
+
+test "ConsumerPauseResponse parsing" {
+    const alloc = std.testing.allocator;
+    const json =
+        \\{"paused":true,
+        \\"pause_until":"2026-04-01T00:00:00Z",
+        \\"pause_remaining":3600000000000}
+    ;
+    var parsed = try jsonParse(
+        ConsumerPauseResponse,
+        alloc,
+        json,
+    );
+    defer parsed.deinit();
+    try std.testing.expect(parsed.value.paused);
+    try std.testing.expect(
+        parsed.value.pause_until != null,
+    );
+    try std.testing.expectEqual(
+        @as(i64, 3600000000000),
+        parsed.value.pause_remaining.?,
+    );
+}
+
+test "PublishOpts TTL field" {
+    const alloc = std.testing.allocator;
+    const json = try jsonStringify(
+        alloc,
+        PublishOpts{ .ttl = "5s" },
+    );
+    defer alloc.free(json);
+    try std.testing.expect(
+        std.mem.indexOf(u8, json, "\"ttl\":\"5s\"") !=
+            null,
+    );
+}
+
+test "StreamConfig allow_msg_ttl" {
+    const alloc = std.testing.allocator;
+    const json = try jsonStringify(alloc, StreamConfig{
+        .name = "TTL_TEST",
+        .allow_msg_ttl = true,
+    });
+    defer alloc.free(json);
+    try std.testing.expect(
+        std.mem.indexOf(u8, json, "allow_msg_ttl") !=
+            null,
+    );
+}
+
+test "CreateConsumerRequest action field" {
+    const alloc = std.testing.allocator;
+    // With action = "create"
+    const json1 = try jsonStringify(
+        alloc,
+        CreateConsumerRequest{
+            .stream_name = "S",
+            .config = .{ .name = "C" },
+            .action = "create",
+        },
+    );
+    defer alloc.free(json1);
+    try std.testing.expect(
+        std.mem.indexOf(
+            u8,
+            json1,
+            "\"action\":\"create\"",
+        ) != null,
+    );
+
+    // With action = null (omitted for createOrUpdate)
+    const json2 = try jsonStringify(
+        alloc,
+        CreateConsumerRequest{
+            .stream_name = "S",
+            .config = .{ .name = "C" },
+        },
+    );
+    defer alloc.free(json2);
+    try std.testing.expect(
+        std.mem.indexOf(u8, json2, "action") == null,
     );
 }
