@@ -2,7 +2,8 @@
 //!
 //! Push consumers have a deliver_subject configured and the
 //! server pushes messages to that subject. The client
-//! subscribes and processes messages as they arrive.
+//! subscribes using a callback and processes messages as
+//! they arrive on the IO thread.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -17,8 +18,6 @@ const JsMsg = @import("message.zig").JsMsg;
 const JetStream = @import("JetStream.zig");
 
 const JsMsgHandler = consumer_mod.JsMsgHandler;
-const ConsumeContext = consumer_mod.ConsumeContext;
-const HeartbeatMonitor = consumer_mod.HeartbeatMonitor;
 
 /// Push-based consumer subscription. Created after a
 /// push consumer exists on the server. Subscribe to
@@ -56,7 +55,9 @@ pub const PushSubscription = struct {
         name: []const u8,
     ) void {
         std.debug.assert(name.len > 0);
-        std.debug.assert(name.len <= self.consumer_buf.len);
+        std.debug.assert(
+            name.len <= self.consumer_buf.len,
+        );
         @memcpy(
             self.consumer_buf[0..name.len],
             name,
@@ -70,7 +71,9 @@ pub const PushSubscription = struct {
         subj: []const u8,
     ) void {
         std.debug.assert(subj.len > 0);
-        std.debug.assert(subj.len <= self.deliver_buf.len);
+        std.debug.assert(
+            subj.len <= self.deliver_buf.len,
+        );
         @memcpy(
             self.deliver_buf[0..subj.len],
             subj,
@@ -101,126 +104,108 @@ pub const PushSubscription = struct {
     };
 
     /// Starts callback-based consumption on the
-    /// deliver subject. Messages are dispatched to
-    /// the handler. Returns a ConsumeContext for
-    /// stop/drain control.
+    /// deliver subject. Uses the client's native
+    /// callback subscription (runs on IO thread).
+    /// To stop: call the returned context's deinit().
     pub fn consume(
         self: *PushSubscription,
         handler: JsMsgHandler,
         opts: ConsumeOpts,
-    ) !ConsumeContext {
+    ) !PushConsumeContext {
+        _ = opts;
         std.debug.assert(self.deliver_len > 0);
         std.debug.assert(self.consumer_len > 0);
 
         const client = self.js.client;
         const subj = self.deliverSubject();
 
+        // Allocate wrapper on heap so it outlives
+        // this function. Stores the JsMsgHandler
+        // and a pointer back to the client.
+        const wrapper = try client.allocator.create(
+            PushCallbackWrapper,
+        );
+        wrapper.* = .{
+            .handler = handler,
+            .client = client,
+            .allocator = client.allocator,
+        };
+
         const qg: ?[]const u8 =
             if (self.deliver_group_len > 0)
                 self.deliver_group_buf[0..self.deliver_group_len]
             else
                 null;
-        const sub = try client.queueSubscribeSync(
+
+        // Use client.subscribe (callback mode).
+        // This runs callbackDrainFn on the IO thread.
+        // Messages are dispatched via the wrapper.
+        const sub = try client.queueSubscribe(
             subj,
             qg,
+            Client.MsgHandler.init(
+                PushCallbackWrapper,
+                wrapper,
+            ),
         );
-        errdefer sub.deinit();
 
         // Flush to ensure SUB reaches the server
         // before the caller creates the push consumer.
-        // Without this, the server may start pushing
-        // before our subscription is registered.
         try client.flush(5_000_000_000);
 
-        var ctx = ConsumeContext{};
-
-        // Use OS thread instead of io.async because
-        // nextMsgTimeout is a spin loop that never
-        // yields to the IO runtime. io.async tasks
-        // can't be canceled while spin-looping.
-        ctx._thread = std.Thread.spawn(
-            .{},
-            pushConsumeTask,
-            .{ client, sub, handler, opts, &ctx },
-        ) catch return error.ThreadSpawnFailed;
-
-        return ctx;
+        return PushConsumeContext{
+            .sub = sub,
+            .wrapper = wrapper,
+        };
     }
 };
 
-/// Background task for push-based consumption.
-fn pushConsumeTask(
-    client: *Client,
-    sub: *Client.Sub,
+/// Heap-allocated wrapper that bridges Client.MsgHandler
+/// (receives *const Message) to JsMsgHandler (receives
+/// *JsMsg). Lives on the heap because the callback
+/// subscription outlives the consume() call.
+const PushCallbackWrapper = struct {
     handler: JsMsgHandler,
-    opts: PushSubscription.ConsumeOpts,
-    ctx: *ConsumeContext,
-) void {
-    defer {
-        sub.deinit();
-        ctx._state.store(.stopped, .release);
-    }
+    client: *Client,
+    allocator: Allocator,
 
-    var hb: ?HeartbeatMonitor = if (opts.heartbeat_ms > 0)
-        HeartbeatMonitor.init(opts.heartbeat_ms)
-    else
-        null;
-    // Short poll interval so we check ctx.state often.
-    // For heartbeat mode, use 2x heartbeat; otherwise
-    // 1s keeps the loop responsive to stop/drain.
-    const recv_ms: u32 = if (hb) |h|
-        h.timeoutMs()
-    else
-        1000;
-
-    while (ctx.state() == .running or
-        ctx.state() == .draining)
-    {
-        const maybe = sub.nextMsgTimeout(
-            recv_ms,
-        ) catch |err| {
-            if (opts.err_handler) |eh| eh(err);
-            if (ctx.state() == .draining) break;
-            continue;
-        };
-        const msg = maybe orelse {
-            if (ctx.state() == .draining) break;
-            if (hb) |*h| {
-                if (h.recordTimeout()) {
-                    if (opts.err_handler) |eh|
-                        eh(errors.Error.NoHeartbeat);
-                    break;
-                }
-            }
-            continue;
-        };
-
-        if (hb) |*h| h.recordActivity();
-
-        // Handle status messages
-        if (msg.status()) |code| {
-            if (code == 100) {
-                // Heartbeat / flow control
-                if (msg.reply_to) |reply| {
-                    client.publish(
-                        reply,
-                        "",
-                    ) catch {};
-                }
-                msg.deinit();
-                continue;
-            }
-            msg.deinit();
-            switch (code) {
-                409 => break,
-                else => continue,
-            }
-        }
-
+    pub fn onMessage(
+        self: *PushCallbackWrapper,
+        msg: *const Client.Message,
+    ) void {
+        // Create a mutable copy of the message for
+        // JsMsg (ack needs to publish to reply_to).
+        // The callback owns `msg` -- it will be
+        // deinited by callbackDrainFn after we return.
+        // JsMsg wraps the message but doesn't own it.
         var js_msg = JsMsg{
-            .msg = msg,
-            .client = client,
+            .msg = msg.*,
+            .client = self.client,
         };
-        handler.dispatch(&js_msg);
+        self.handler.dispatch(&js_msg);
     }
-}
+};
+
+/// Context for controlling an active push consume.
+/// Simpler than ConsumeContext -- just wraps the
+/// subscription. Stopping = unsubscribing.
+pub const PushConsumeContext = struct {
+    sub: ?*Client.Sub,
+    wrapper: *PushCallbackWrapper,
+
+    /// Stops consumption. Safe to call before deinit.
+    pub fn stop(self: *PushConsumeContext) void {
+        if (self.sub) |s| {
+            s.deinit();
+            self.sub = null;
+        }
+    }
+
+    /// Stops (if not already) and frees resources.
+    pub fn deinit(self: *PushConsumeContext) void {
+        self.stop();
+        self.wrapper.allocator.destroy(
+            self.wrapper,
+        );
+    }
+};

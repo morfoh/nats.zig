@@ -74,5 +74,6 @@ pub fn runAll(allocator: std.mem.Allocator, manager: *ServerManager) void {
     callback.runAll(allocator);
     stress_subs.runAll(allocator);
     jetstream.runAll(allocator, manager);
+    jetstream.runReconnectTests(allocator, manager);
     multithread.runAll(allocator);
 }

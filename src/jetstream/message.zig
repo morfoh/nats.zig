@@ -23,6 +23,30 @@ pub const JsMsg = struct {
         self.acked = true;
     }
 
+    /// Acknowledges and waits for server confirmation.
+    /// Slower than ack() but guarantees the server
+    /// processed the acknowledgment.
+    pub fn doubleAck(
+        self: *JsMsg,
+        timeout_ms: u32,
+    ) !void {
+        std.debug.assert(!self.acked);
+        std.debug.assert(timeout_ms > 0);
+        const reply = self.msg.reply_to orelse
+            return;
+        std.debug.assert(reply.len > 0);
+        const resp = self.client.request(
+            reply,
+            "+ACK",
+            timeout_ms,
+        ) catch |err| return err;
+        if (resp) |r| {
+            var m = r;
+            m.deinit();
+        }
+        self.acked = true;
+    }
+
     /// Negatively acknowledges -- triggers redelivery (-NAK).
     pub fn nak(self: *JsMsg) !void {
         std.debug.assert(!self.acked);

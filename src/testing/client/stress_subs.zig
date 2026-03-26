@@ -945,8 +945,18 @@ pub fn testMaxPayload1MB(
         b.* = @truncate(i);
     }
 
-    client.publish("big.1mb", payload) catch {
-        reportResult("max_payload_1mb", false, "publish");
+    client.publish("big.1mb", payload) catch |err| {
+        var buf: [128]u8 = undefined;
+        const detail = std.fmt.bufPrint(
+            &buf,
+            "publish: {s}",
+            .{@errorName(err)},
+        ) catch "publish: ?";
+        reportResult(
+            "max_payload_1mb",
+            false,
+            detail,
+        );
         return;
     };
 

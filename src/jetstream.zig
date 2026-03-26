@@ -47,6 +47,10 @@ pub const AccountInfo = types.AccountInfo;
 pub const ConsumerPauseResponse = types.ConsumerPauseResponse;
 pub const PublishOpts = types.PublishOpts;
 pub const MsgGetResponse = types.MsgGetResponse;
+pub const KeyValueStatus = types.KeyValueStatus;
+const async_pub = @import("jetstream/async_publish.zig");
+pub const AsyncPublisher = async_pub.AsyncPublisher;
+pub const PubAckFuture = async_pub.PubAckFuture;
 
 test {
     std.testing.refAllDecls(@This());

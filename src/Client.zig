@@ -814,8 +814,13 @@ pub fn connect(
     };
     errdefer allocator.free(client.write_buffer);
 
-    // Publish ring: power-of-2, at least 2x max_payload
-    const min_ring = defaults.Protocol.max_payload * 2;
+    // Publish ring: power-of-2, must be > 2x largest
+    // possible entry. The ring rejects entries that
+    // exceed capacity/2. Entry size = RING_HDR_SIZE +
+    // PUB overhead + payload. Add 512 bytes headroom
+    // for subject, reply-to, and length digits.
+    const min_ring =
+        (defaults.Protocol.max_payload + 512) * 2;
     const ring_size = std.math.ceilPowerOfTwo(
         usize,
         @max(min_ring, opts.writer_buffer_size),

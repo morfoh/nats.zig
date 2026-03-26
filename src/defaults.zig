@@ -3,6 +3,8 @@
 //! Queue size is the master value. Slab tier counts derive from it.
 //! Change queue_size once, all memory allocations adjust automatically.
 
+const builtin = @import("builtin");
+
 /// Predefined queue size options (power-of-2, 1K to 512K).
 pub const QueueSize = enum(u32) {
     k1 = 1024,
@@ -128,9 +130,12 @@ pub const Spin = struct {
     /// With 1ms poll timeout, 100 iterations = ~100ms between timestamp checks.
     /// This aligns with health_check_interval_ns (100ms) in io_task.
     pub const health_check_iterations: u32 = 1000000;
-    /// Loop iterations between timeout checks in nextWithTimeout().
-    /// Reduces syscalls while maintaining reasonable timeout granularity.
-    pub const timeout_check_iterations: u32 = 10000;
+    /// Loop iterations between timeout checks in
+    /// nextWithTimeout(). In ReleaseFast, 10K spins
+    /// take microseconds. In Debug, each spin is much
+    /// slower -- use 100 to keep timeouts responsive.
+    pub const timeout_check_iterations: u32 =
+        if (builtin.mode == .Debug) 100 else 10000;
 };
 
 /// Poll timeout configuration for io_task.

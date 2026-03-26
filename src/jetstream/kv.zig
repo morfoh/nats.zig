@@ -250,6 +250,18 @@ pub const KeyValue = struct {
         return resp.value.seq;
     }
 
+    /// Puts a string value for a key. Convenience
+    /// wrapper around put() -- in Zig, strings are
+    /// already []const u8.
+    pub fn putString(
+        self: *KeyValue,
+        key: []const u8,
+        value: []const u8,
+    ) !u64 {
+        std.debug.assert(key.len > 0);
+        return self.put(key, value);
+    }
+
     /// Creates a key only if it does not already exist.
     /// Returns the revision, or error.ApiError if the
     /// key already exists (check lastApiError for
@@ -298,6 +310,44 @@ pub const KeyValue = struct {
         defer resp.deinit();
         return resp.value.seq;
     }
+
+    /// Options for KV create operations.
+    pub const CreateOpts = struct {
+        /// Per-key TTL (e.g., "5s", "1m"). Requires
+        /// the bucket to have allow_msg_ttl enabled.
+        ttl: ?[]const u8 = null,
+    };
+
+    /// Creates a key with options (e.g., per-key TTL).
+    pub fn createWithOpts(
+        self: *KeyValue,
+        key: []const u8,
+        value: []const u8,
+        opts: CreateOpts,
+    ) !u64 {
+        std.debug.assert(key.len > 0);
+        var subj_buf: [256]u8 = undefined;
+        const subj = try self.kvSubject(
+            key,
+            &subj_buf,
+        );
+        var resp = try self.js.publishWithOpts(
+            subj,
+            value,
+            .{
+                .expected_last_subj_seq = 0,
+                .ttl = opts.ttl,
+            },
+        );
+        defer resp.deinit();
+        return resp.value.seq;
+    }
+
+    /// Options for conditional delete/purge.
+    pub const KvDeleteOpts = struct {
+        /// Only delete if latest revision matches.
+        last_revision: ?u64 = null,
+    };
 
     // -- Delete / Purge --
 
@@ -355,6 +405,94 @@ pub const KeyValue = struct {
             subj,
             "",
             &hdrs,
+        );
+        defer resp.deinit();
+        return resp.value.seq;
+    }
+
+    /// Deletes a key only if latest revision matches.
+    pub fn deleteWithOpts(
+        self: *KeyValue,
+        key: []const u8,
+        opts: KvDeleteOpts,
+    ) !u64 {
+        std.debug.assert(key.len > 0);
+        var subj_buf: [256]u8 = undefined;
+        const subj = try self.kvSubject(
+            key,
+            &subj_buf,
+        );
+        var hdr_entries: [2]nats.protocol.headers.Entry =
+            undefined;
+        hdr_entries[0] = .{
+            .key = "KV-Operation",
+            .value = "DEL",
+        };
+        var hdr_count: usize = 1;
+        var rev_buf: [20]u8 = undefined;
+        if (opts.last_revision) |rev| {
+            const s = std.fmt.bufPrint(
+                &rev_buf,
+                "{d}",
+                .{rev},
+            ) catch unreachable;
+            hdr_entries[1] = .{
+                .key = headers_mod.HeaderName
+                    .expected_last_subj_seq,
+                .value = s,
+            };
+            hdr_count = 2;
+        }
+        var resp = try self.js.publishRetry(
+            subj,
+            "",
+            hdr_entries[0..hdr_count],
+        );
+        defer resp.deinit();
+        return resp.value.seq;
+    }
+
+    /// Purges a key only if latest revision matches.
+    pub fn purgeWithOpts(
+        self: *KeyValue,
+        key: []const u8,
+        opts: KvDeleteOpts,
+    ) !u64 {
+        std.debug.assert(key.len > 0);
+        var subj_buf: [256]u8 = undefined;
+        const subj = try self.kvSubject(
+            key,
+            &subj_buf,
+        );
+        var hdr_entries: [3]nats.protocol.headers.Entry =
+            undefined;
+        hdr_entries[0] = .{
+            .key = "KV-Operation",
+            .value = "PURGE",
+        };
+        hdr_entries[1] = .{
+            .key = "Nats-Rollup",
+            .value = "sub",
+        };
+        var hdr_count: usize = 2;
+        var rev_buf: [20]u8 = undefined;
+        if (opts.last_revision) |rev| {
+            const s = std.fmt.bufPrint(
+                &rev_buf,
+                "{d}",
+                .{rev},
+            ) catch unreachable;
+            hdr_entries[2] = .{
+                .key = headers_mod.HeaderName
+                    .expected_last_subj_seq,
+                .value = s,
+            };
+            hdr_count = 3;
+        }
+        var resp = try self.js.publishRetry(
+            subj,
+            "",
+            hdr_entries[0..hdr_count],
         );
         defer resp.deinit();
         return resp.value.seq;
@@ -488,6 +626,145 @@ pub const KeyValue = struct {
         }
 
         return result.toOwnedSlice(allocator);
+    }
+
+    /// Returns all revisions with watch options.
+    pub fn historyWithOpts(
+        self: *KeyValue,
+        allocator: Allocator,
+        key: []const u8,
+        opts: types.WatchOpts,
+    ) ![]types.KeyValueEntry {
+        std.debug.assert(key.len > 0);
+
+        var subj_buf: [256]u8 = undefined;
+        const filter = try self.kvSubject(
+            key,
+            &subj_buf,
+        );
+
+        const dp: types.DeliverPolicy = if (opts
+            .include_history) .all else .all;
+        var pull = try self.createEphemeralPull(
+            filter,
+            dp,
+            if (opts.resume_from_revision) |r| r else null,
+        );
+        defer self.deleteEphemeralPull(&pull);
+
+        var result: std.ArrayList(
+            types.KeyValueEntry,
+        ) = .empty;
+        errdefer result.deinit(allocator);
+
+        while (true) {
+            var msg = (pull.next(3000) catch break) orelse break;
+            defer msg.deinit();
+
+            var op: types.KeyValueOp = .put;
+            if (msg.headers()) |h| {
+                op = parseKvOp(h);
+            }
+
+            if (opts.ignore_deletes and
+                (op == .delete or op == .purge))
+                continue;
+
+            const md = msg.metadata();
+            const seq = if (md) |m|
+                m.stream_seq
+            else
+                0;
+
+            if (opts.meta_only) {
+                result.append(allocator, .{
+                    .bucket = self.bucket(),
+                    .key = key,
+                    .value = "",
+                    .revision = seq,
+                    .operation = op,
+                }) catch break;
+                continue;
+            }
+
+            const data = msg.data();
+            var val: []const u8 = "";
+            var val_alloc: ?Allocator = null;
+            if (data.len > 0 and op == .put) {
+                val = try allocator.dupe(u8, data);
+                val_alloc = allocator;
+            }
+
+            result.append(allocator, .{
+                .bucket = self.bucket(),
+                .key = key,
+                .value = val,
+                .revision = seq,
+                .operation = op,
+                .value_allocator = val_alloc,
+            }) catch {
+                if (val_alloc) |a| a.free(val);
+                break;
+            };
+        }
+
+        return result.toOwnedSlice(allocator);
+    }
+
+    /// Returns a streaming key lister with filters.
+    /// Only returns keys matching the given patterns.
+    pub fn listKeysFiltered(
+        self: *KeyValue,
+        patterns: []const []const u8,
+    ) !KeyLister {
+        std.debug.assert(self.bucket_len > 0);
+        std.debug.assert(patterns.len > 0);
+        std.debug.assert(patterns.len <= 16);
+
+        var filters: [16][]const u8 = undefined;
+        var filter_bufs: [16][256]u8 = undefined;
+
+        for (patterns, 0..) |p, i| {
+            const f = std.fmt.bufPrint(
+                &filter_bufs[i],
+                "$KV.{s}.{s}",
+                .{ self.bucket(), p },
+            ) catch return errors.Error.SubjectTooLong;
+            filters[i] = filter_bufs[i][0..f.len];
+        }
+
+        const seq = ephemeral_counter.fetchAdd(
+            1,
+            .monotonic,
+        );
+        const name = std.fmt.bufPrint(
+            &self._eph_name_buf,
+            "kv{d}x{d}",
+            .{ seq, @intFromPtr(self) % 99999 },
+        ) catch unreachable;
+        self._eph_name_len = @intCast(name.len);
+
+        const fs = filters[0..patterns.len];
+        var resp = try self.js.createConsumer(
+            self.streamName(),
+            .{
+                .name = name,
+                .ack_policy = .none,
+                .deliver_policy = .last_per_subject,
+                .filter_subjects = fs,
+                .mem_storage = true,
+                .inactive_threshold = 60_000_000_000,
+            },
+        );
+        resp.deinit();
+
+        var pull = PullSubscription{
+            .js = self.js,
+            .stream = self.streamName(),
+        };
+        pull.setConsumer(name);
+
+        return KeyLister{ .kv = self, .pull = pull };
     }
 
     // -- Watch --

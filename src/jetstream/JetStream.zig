@@ -29,6 +29,9 @@ pub const ConsumerListResponse = types.ConsumerListResponse;
 pub const ListRequest = types.ListRequest;
 pub const AccountInfo = types.AccountInfo;
 const StorageType = types.StorageType;
+const PushSubscription = @import(
+    "push.zig",
+).PushSubscription;
 pub const ApiError = errors.ApiError;
 pub const ApiErrorJson = errors.ApiErrorJson;
 
@@ -514,6 +517,92 @@ pub fn resumeConsumer(
     );
 }
 
+/// Updates an existing push consumer.
+/// Config must have deliver_subject set.
+pub fn updatePushConsumer(
+    self: *JetStream,
+    stream: []const u8,
+    config: ConsumerConfig,
+) !Response(ConsumerInfo) {
+    std.debug.assert(stream.len > 0);
+    std.debug.assert(config.deliver_subject != null);
+    std.debug.assert(self.timeout_ms > 0);
+    return self.updateConsumer(stream, config);
+}
+
+/// Binds to an existing push consumer by name.
+/// Returns a PushSubscription with deliver_subject
+/// populated from the server-side config.
+pub fn pushConsumer(
+    self: *JetStream,
+    stream: []const u8,
+    consumer_name: []const u8,
+) !PushSubscription {
+    std.debug.assert(stream.len > 0);
+    std.debug.assert(consumer_name.len > 0);
+    var resp = try self.consumerInfo(
+        stream,
+        consumer_name,
+    );
+    defer resp.deinit();
+
+    const cfg = resp.value.config orelse
+        return errors.Error.ApiError;
+    const ds = cfg.deliver_subject orelse
+        return errors.Error.ApiError;
+
+    var ps = PushSubscription{
+        .js = self,
+        .stream = stream,
+    };
+    ps.setConsumer(consumer_name);
+    ps.setDeliverSubject(ds);
+    if (cfg.deliver_group) |dg| {
+        ps.setDeliverGroup(dg);
+    }
+    return ps;
+}
+
+/// Unpins the currently pinned client for a consumer
+/// in the given delivery group.
+pub fn unpinConsumer(
+    self: *JetStream,
+    stream: []const u8,
+    consumer: []const u8,
+    group: []const u8,
+) !Response(DeleteResponse) {
+    std.debug.assert(stream.len > 0);
+    std.debug.assert(consumer.len > 0);
+    std.debug.assert(group.len > 0);
+    std.debug.assert(self.timeout_ms > 0);
+    var buf: [512]u8 = undefined;
+    const subj = std.fmt.bufPrint(
+        &buf,
+        "CONSUMER.UNPIN.{s}.{s}",
+        .{ stream, consumer },
+    ) catch return errors.Error.SubjectTooLong;
+    return self.apiRequest(
+        DeleteResponse,
+        subj,
+        types.ConsumerUnpinRequest{
+            .group = group,
+        },
+    );
+}
+
+/// Returns the underlying client connection.
+pub fn conn(self: *const JetStream) *Client {
+    return self.client;
+}
+
+/// Returns the JetStream context options.
+pub fn options(self: *const JetStream) Options {
+    return .{
+        .api_prefix = self.apiPrefix(),
+        .timeout_ms = self.timeout_ms,
+    };
+}
+
 // -- Listing & Account Info --
 
 /// Returns stream names. Pass offset=0 for first
@@ -920,6 +1009,55 @@ pub fn keyValueStoreNames(
         }
         offset += names.len;
         if (offset >= resp.value.total) break;
+    }
+    return result.toOwnedSlice(alloc);
+}
+
+/// Returns all KV buckets with status info. Caller
+/// owns the returned slice.
+pub fn keyValueStores(
+    self: *JetStream,
+    alloc: std.mem.Allocator,
+) ![]types.KeyValueStatus {
+    std.debug.assert(self.timeout_ms > 0);
+    const names = try self.keyValueStoreNames(alloc);
+    defer {
+        for (names) |n| alloc.free(n);
+        alloc.free(names);
+    }
+
+    var result: std.ArrayList(
+        types.KeyValueStatus,
+    ) = .empty;
+    errdefer result.deinit(alloc);
+
+    for (names) |bucket| {
+        var stream_buf: [68]u8 = undefined;
+        const sn = std.fmt.bufPrint(
+            &stream_buf,
+            "KV_{s}",
+            .{bucket},
+        ) catch continue;
+        var resp = self.streamInfo(sn) catch continue;
+        defer resp.deinit();
+
+        const cfg = resp.value.config orelse continue;
+        const state = resp.value.state orelse
+            types.StreamState{};
+
+        try result.append(alloc, .{
+            .bucket = bucket,
+            .values = state.messages,
+            .history = cfg.max_msgs_per_subject orelse
+                1,
+            .ttl = cfg.max_age orelse 0,
+            .bytes = state.bytes,
+            .backing_store = cfg.storage orelse .file,
+            .is_compressed = if (cfg.compression) |c|
+                c == .s2
+            else
+                false,
+        });
     }
     return result.toOwnedSlice(alloc);
 }

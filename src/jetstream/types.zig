@@ -309,6 +309,18 @@ pub const StoredMsg = struct {
     time: ?[]const u8 = null,
 };
 
+// -- Key-Value status --
+
+pub const KeyValueStatus = struct {
+    bucket: []const u8 = "",
+    values: u64 = 0,
+    history: i64 = 1,
+    ttl: i64 = 0,
+    bytes: u64 = 0,
+    backing_store: StorageType = .file,
+    is_compressed: bool = false,
+};
+
 // -- Stream MSG.DELETE types --
 
 pub const MsgDeleteRequest = struct {
@@ -328,6 +340,12 @@ pub const ConsumerPauseResponse = struct {
     paused: bool = false,
     pause_until: ?[]const u8 = null,
     pause_remaining: ?i64 = null,
+};
+
+// -- Consumer unpin types --
+
+pub const ConsumerUnpinRequest = struct {
+    group: []const u8,
 };
 
 // -- Account info --
