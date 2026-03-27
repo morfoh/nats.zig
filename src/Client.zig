@@ -650,6 +650,7 @@ tls_read_buffer: ?[]u8 = null,
 tls_write_buffer: ?[]u8 = null,
 /// CA certificate bundle for verification.
 ca_bundle: ?Certificate.Bundle = null,
+ca_bundle_lock: Io.RwLock = .init,
 /// Whether TLS is enabled for this connection.
 use_tls: bool = false,
 /// Host for TLS SNI and certificate verification.
@@ -794,7 +795,7 @@ pub fn connect(
         return error.InvalidAddress;
     };
 
-    client.stream = net.IpAddress.connect(address, io, .{
+    client.stream = net.IpAddress.connect(&address, io, .{
         .mode = .stream,
         .protocol = .tcp,
     }) catch {
@@ -1162,7 +1163,7 @@ fn upgradeTls(
     // Load CA bundle (unless insecure mode)
     if (!opts.tls_insecure_skip_verify) {
         if (self.ca_bundle == null) {
-            self.ca_bundle = .{};
+            self.ca_bundle = .empty;
         }
         const now = Io.Clock.real.now(self.io);
         if (opts.tls_ca_file) |ca_path| {
@@ -1196,11 +1197,16 @@ fn upgradeTls(
         .ca = if (opts.tls_insecure_skip_verify)
             .no_verification
         else
-            .{ .bundle = self.ca_bundle.? },
+            .{ .bundle = .{
+                .gpa = self.allocator,
+                .io = self.io,
+                .lock = &self.ca_bundle_lock,
+                .bundle = &self.ca_bundle.?,
+            } },
         .read_buffer = self.tls_read_buffer.?,
         .write_buffer = self.tls_write_buffer.?,
         .entropy = &entropy,
-        .realtime_now_seconds = now.toSeconds(),
+        .realtime_now = now,
     };
 
     // Perform TLS handshake (propagates TLS errors)
@@ -3659,7 +3665,7 @@ pub fn tryConnect(
     };
 
     // Connect
-    self.stream = net.IpAddress.connect(address, self.io, .{
+    self.stream = net.IpAddress.connect(&address, self.io, .{
         .mode = .stream,
         .protocol = .tcp,
     }) catch {
