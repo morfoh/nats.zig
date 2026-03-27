@@ -96,6 +96,19 @@ pub const MsgHandler = struct {
     }
 };
 
+/// Checks if a file descriptor is valid using fcntl.
+/// Returns false for negative fds or closed fds.
+/// Used to guard shutdown/close calls that panic on
+/// BADF in debug mode (Io.Threaded treats as bug).
+fn isValidFd(fd: std.posix.fd_t) bool {
+    if (fd < 0) return false;
+    const F_GETFD = 1;
+    const rc = std.posix.system.fcntl(fd, F_GETFD, 0);
+    // fcntl returns the fd flags on success, or a
+    // large unsigned value (wrapped errno) on failure
+    return rc < 0x1000;
+}
+
 /// Gets current monotonic time in nanoseconds.
 fn getNowNs(io: Io) u64 {
     const ts = Io.Timestamp.now(io, .awake);
@@ -673,9 +686,15 @@ pub fn connect(
     client.free_count = MAX_SUBSCRIPTIONS;
     client.next_sid = 1;
     client.read_mutex = .init;
+    client.sub_mutex = .init;
+    client.publish_mutex = .init;
+    client.return_lock = .{};
     client.statistics = .{};
     client.cached_sub = null;
     client.max_payload = 1024 * 1024;
+    client.tcp_nodelay_set = false;
+    client.tcp_rcvbuf_set = false;
+    client.flush_requested = std.atomic.Value(bool).init(false);
 
     // Initialize reconnection state
     client.server_pool = undefined;
@@ -705,6 +724,8 @@ pub fn connect(
 
     // Initialize background I/O task infrastructure
     client.write_mutex = .init;
+    client.io_task_future = null;
+    client.publish_ring_buf = null;
 
     // Initialize event callback infrastructure
     client.event_queue = null;
@@ -718,6 +739,8 @@ pub fn connect(
     client.tls_read_buffer = null;
     client.tls_write_buffer = null;
     client.ca_bundle = null;
+    client.use_tls = false;
+    client.tls_host_len = 0;
     // Determine if TLS should be used: URL scheme, explicit option, or CA file set
     client.use_tls = parsed.use_tls or opts.tls_required or
         opts.tls_ca_file != null or opts.tls_handshake_first;
@@ -2104,8 +2127,10 @@ pub fn forceReconnect(self: *Client) !void {
     // Shutdown read only -- in-flight writes stay safe.
     // io_task sees EndOfStream, enters handleDisconnect
     // which calls cleanupForReconnect for full close
-    // with write_mutex.
-    self.stream.shutdown(self.io, .recv) catch {};
+    // with write_mutex. Guard: fd may be invalid.
+    if (isValidFd(self.stream.socket.handle)) {
+        self.stream.shutdown(self.io, .recv) catch {};
+    }
 }
 
 /// Gracefully drains with a timeout.
@@ -2447,8 +2472,11 @@ pub fn drain(self: *Client) !DrainResult {
     self.pushEvent(.{ .draining = {} });
 
     State.atomicStore(&self.state, .closed);
-    // Shutdown read to unblock io_task
-    self.stream.shutdown(self.io, .recv) catch {};
+    // Shutdown read to unblock io_task. Guard: fd may
+    // already be closed by io_task during disconnect.
+    if (isValidFd(self.stream.socket.handle)) {
+        self.stream.shutdown(self.io, .recv) catch {};
+    }
     // Wait for io_task to exit
     if (self.io_task_future) |*future| {
         _ = future.cancel(self.io);
@@ -2893,28 +2921,30 @@ pub fn rtt(self: *Client) !u64 {
     // Wait for PONG - poll last_pong_received_ns
     // io_task handles PONG and updates the timestamp
     const old_pong_ns = self.last_pong_received_ns.load(.acquire);
-    const timeout_ns: u64 = 5_000_000_000; // 5 second timeout
-    var check_counter: u32 = 0;
+    const timeout_ns: u64 = 5_000_000_000;
+    var spin_count: u32 = 0;
 
     while (true) {
         const current_pong_ns = self.last_pong_received_ns.load(.acquire);
         if (current_pong_ns > old_pong_ns) {
-            // PONG received - calculate RTT
             const end_ns = getNowNs(self.io);
             return end_ns - start_ns;
         }
 
-        // Check for timeout periodically
-        check_counter +%= 1;
-        if (check_counter >= defaults.Spin.timeout_check_iterations) {
-            check_counter = 0;
+        spin_count += 1;
+        if (spin_count < defaults.Spin.max_spins) {
+            std.atomic.spinLoopHint();
+        } else {
+            self.io.sleep(
+                .fromNanoseconds(0),
+                .awake,
+            ) catch {};
+            spin_count = 0;
             const now_ns = getNowNs(self.io);
             if (now_ns - start_ns >= timeout_ns) {
                 return error.Timeout;
             }
         }
-
-        std.atomic.spinLoopHint();
     }
 }
 
@@ -3075,8 +3105,12 @@ pub fn deinit(self: *Client) void {
     State.atomicStore(&self.state, .closed);
 
     // 2. Shutdown read side only -- unblocks fillMore()
-    //    Write fd stays valid for in-flight writes
-    if (was_open) {
+    //    Write fd stays valid for in-flight writes.
+    //    Guard: fd may already be closed by io_task during
+    //    disconnect or failed reconnect. BADF panics in
+    //    debug mode (Io.Threaded treats it as programmer
+    //    bug, not catchable). Validate fd before syscall.
+    if (was_open and isValidFd(self.stream.socket.handle)) {
         self.stream.shutdown(self.io, .recv) catch {};
     }
 
@@ -3087,7 +3121,7 @@ pub fn deinit(self: *Client) void {
     }
 
     // 4. Full close -- io_task exited, no concurrent writers
-    if (was_open) {
+    if (was_open and isValidFd(self.stream.socket.handle)) {
         self.stream.close(self.io);
     }
 
@@ -4044,13 +4078,10 @@ pub const Subscription = struct {
         return count;
     }
 
-    /// Receive with timeout using timer-based polling.
-    ///
-    /// Arguments:
-    ///     timeout_ms: Maximum wait time in milliseconds
-    ///
-    /// Only valid for manual-mode subscriptions.
-    /// Returns null on timeout. Uses lock-free polling with timer.
+    /// Receive with timeout. Spins briefly for low
+    /// latency, then yields to the IO event loop.
+    /// Returns null on timeout. Supports cancellation
+    /// via io.sleep yield points.
     pub fn nextMsgTimeout(
         self: *Subscription,
         timeout_ms: u32,
@@ -4058,14 +4089,15 @@ pub const Subscription = struct {
         assert(self.mode == .manual);
         if (self.mode != .manual)
             return error.SubscriptionModeConflict;
-        assert(self.state == .active or self.state == .draining);
+        assert(self.state == .active or
+            self.state == .draining);
         assert(timeout_ms > 0);
 
         const io = self.client.io;
         const start = getNowNs(io);
         const timeout_ns: u64 =
             @as(u64, timeout_ms) * std.time.ns_per_ms;
-        var check_counter: u32 = 0;
+        var spin_count: u32 = 0;
 
         while (true) {
             if (self.queue.pop()) |msg| {
@@ -4083,17 +4115,27 @@ pub const Subscription = struct {
                 return error.Closed;
             }
 
-            check_counter +%= 1;
-            if (check_counter >=
-                defaults.Spin.timeout_check_iterations)
-            {
-                check_counter = 0;
+            spin_count += 1;
+            if (spin_count < defaults.Spin.max_spins) {
+                std.atomic.spinLoopHint();
+            } else {
+                // Yield to IO event loop. This:
+                // - stops burning CPU
+                // - enables future.cancel()
+                // - works in Debug mode
+                io.sleep(
+                    .fromNanoseconds(0),
+                    .awake,
+                ) catch |err| {
+                    if (err == error.Canceled)
+                        return error.Canceled;
+                };
+                spin_count = 0;
+                // Check timeout after yielding
                 const now = getNowNs(io);
                 if (now -| start >= timeout_ns)
                     return null;
             }
-
-            std.atomic.spinLoopHint();
         }
     }
 
@@ -4201,24 +4243,26 @@ pub const Subscription = struct {
         const start = getNowNs(io);
         const timeout_ns: u64 =
             @as(u64, timeout_ms) * std.time.ns_per_ms;
-        var check_counter: u32 = 0;
+        var spin_count: u32 = 0;
 
         while (true) {
             if (self.queue.len() == 0) {
                 return;
             }
 
-            check_counter +%= 1;
-            if (check_counter >=
-                defaults.Spin.timeout_check_iterations)
-            {
-                check_counter = 0;
+            spin_count += 1;
+            if (spin_count < defaults.Spin.max_spins) {
+                std.atomic.spinLoopHint();
+            } else {
+                io.sleep(
+                    .fromNanoseconds(0),
+                    .awake,
+                ) catch {};
+                spin_count = 0;
                 const now = getNowNs(io);
                 if (now -| start >= timeout_ns)
                     return error.Timeout;
             }
-
-            std.atomic.spinLoopHint();
         }
     }
 

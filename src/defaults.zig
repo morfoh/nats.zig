@@ -126,16 +126,11 @@ pub const Spin = struct {
     /// Spin iterations before yielding in subscription next() loop.
     /// After this many spins, yields to I/O runtime for cancellation support.
     pub const max_spins: u32 = 4096;
-    /// Loop iterations between health check timestamp reads in io_task.
-    /// With 1ms poll timeout, 100 iterations = ~100ms between timestamp checks.
-    /// This aligns with health_check_interval_ns (100ms) in io_task.
+    /// Loop iterations between health check timestamp
+    /// reads in io_task.
     pub const health_check_iterations: u32 = 1000000;
-    /// Loop iterations between timeout checks in
-    /// nextWithTimeout(). In ReleaseFast, 10K spins
-    /// take microseconds. In Debug, each spin is much
-    /// slower -- use 100 to keep timeouts responsive.
-    pub const timeout_check_iterations: u32 =
-        if (builtin.mode == .Debug) 100 else 10000;
+    // timeout_check_iterations removed -- all spin loops
+    // now use io.sleep yield after max_spins instead.
 };
 
 /// Poll timeout configuration for io_task.

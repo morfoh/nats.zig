@@ -2972,7 +2972,7 @@ pub fn testKvPutGet(
     }
 
     // Get
-    const entry = (kv.get("mykey") catch {
+    var entry = (kv.get("mykey") catch {
         reportResult("kv_put_get", false, "get");
         return;
     }) orelse {
@@ -2983,6 +2983,7 @@ pub fn testKvPutGet(
         );
         return;
     };
+    defer entry.deinit();
 
     if (entry.revision != rev1) {
         reportResult(
@@ -3250,7 +3251,7 @@ pub fn testKvDelete(
     };
 
     // Get should show delete marker
-    const entry = (kv.get("delkey") catch {
+    var entry = (kv.get("delkey") catch {
         reportResult("kv_delete", false, "get");
         return;
     }) orelse {
@@ -3265,6 +3266,7 @@ pub fn testKvDelete(
         reportResult("kv_delete", true, "");
         return;
     };
+    defer entry.deinit();
 
     if (entry.operation != .delete) {
         reportResult(
@@ -3431,7 +3433,10 @@ pub fn testKvHistory(
         );
         return;
     };
-    defer allocator.free(hist);
+    defer {
+        for (hist) |*h| h.deinit();
+        allocator.free(hist);
+    }
 
     if (hist.len != 3) {
         var buf: [64]u8 = undefined;
@@ -3524,7 +3529,7 @@ pub fn testKvWatch(
     defer watcher.deinit();
 
     // Should get the initial key
-    const entry = (watcher.next(5000) catch |err| {
+    var entry = (watcher.next(5000) catch |err| {
         var buf: [64]u8 = undefined;
         const m = std.fmt.bufPrint(
             &buf,
@@ -3541,6 +3546,7 @@ pub fn testKvWatch(
         );
         return;
     };
+    defer entry.deinit();
 
     if (!std.mem.eql(u8, entry.key, "pre-watch")) {
         reportResult(
@@ -5737,7 +5743,7 @@ pub fn testKvPurgeDeletes(
     _ = purged;
 
     // Verify d and e still accessible
-    const ed = (kv.get("d") catch {
+    var ed = (kv.get("d") catch {
         reportResult(
             "kv_purge_deletes",
             false,
@@ -5752,6 +5758,7 @@ pub fn testKvPurgeDeletes(
         );
         return;
     };
+    defer ed.deinit();
     if (ed.operation != .put) {
         reportResult(
             "kv_purge_deletes",
@@ -5761,7 +5768,7 @@ pub fn testKvPurgeDeletes(
         return;
     }
 
-    const ee = (kv.get("e") catch {
+    var ee = (kv.get("e") catch {
         reportResult(
             "kv_purge_deletes",
             false,
@@ -5776,6 +5783,7 @@ pub fn testKvPurgeDeletes(
         );
         return;
     };
+    defer ee.deinit();
     if (ee.operation != .put) {
         reportResult(
             "kv_purge_deletes",
@@ -6758,7 +6766,7 @@ pub fn testKvPutString(
         return;
     }
 
-    const entry = (kv.get("greeting") catch {
+    var entry = (kv.get("greeting") catch {
         reportResult(name, false, "get");
         return;
     }) orelse {
@@ -6769,6 +6777,7 @@ pub fn testKvPutString(
         );
         return;
     };
+    defer entry.deinit();
 
     if (!std.mem.eql(u8, entry.value, "hello")) {
         reportResult(
@@ -7138,7 +7147,10 @@ pub fn testKvHistoryWithOpts(
         );
         return;
     };
-    defer allocator.free(hist);
+    defer {
+        for (hist) |*h| h.deinit();
+        allocator.free(hist);
+    }
 
     if (hist.len != 3) {
         var buf: [64]u8 = undefined;
@@ -7662,7 +7674,7 @@ pub fn testKvEmptyValue(
         return;
     };
 
-    const entry = (kv.get("empty") catch {
+    var entry = (kv.get("empty") catch {
         reportResult(name, false, "get");
         return;
     }) orelse {
@@ -7673,6 +7685,7 @@ pub fn testKvEmptyValue(
         );
         return;
     };
+    defer entry.deinit();
 
     if (entry.value.len != 0) {
         reportResult(
@@ -7762,13 +7775,14 @@ pub fn testKvKeySpecialChars(
     };
 
     // Verify all readable
-    const e1 = (kv.get("my.nested.key") catch {
+    var e1 = (kv.get("my.nested.key") catch {
         reportResult(name, false, "get dot");
         return;
     }) orelse {
         reportResult(name, false, "dot missing");
         return;
     };
+    defer e1.deinit();
     if (!std.mem.eql(u8, e1.value, "v1")) {
         reportResult(
             name,
@@ -7778,7 +7792,7 @@ pub fn testKvKeySpecialChars(
         return;
     }
 
-    const e2 = (kv.get("my-dashed") catch {
+    var e2 = (kv.get("my-dashed") catch {
         reportResult(name, false, "get dash");
         return;
     }) orelse {
@@ -7789,6 +7803,7 @@ pub fn testKvKeySpecialChars(
         );
         return;
     };
+    defer e2.deinit();
     if (!std.mem.eql(u8, e2.value, "v2")) {
         reportResult(
             name,
@@ -7798,7 +7813,7 @@ pub fn testKvKeySpecialChars(
         return;
     }
 
-    const e3 = (kv.get("under_score") catch {
+    var e3 = (kv.get("under_score") catch {
         reportResult(
             name,
             false,
@@ -7813,6 +7828,7 @@ pub fn testKvKeySpecialChars(
         );
         return;
     };
+    defer e3.deinit();
     if (!std.mem.eql(u8, e3.value, "v3")) {
         reportResult(
             name,
@@ -7903,7 +7919,7 @@ pub fn testKvCreateExisting(
     _ = kv.create("exists", "v2") catch |err| {
         if (err == error.ApiError) {
             // Verify value is still v1
-            const entry = (kv.get(
+            var entry = (kv.get(
                 "exists",
             ) catch {
                 reportResult(
@@ -7920,6 +7936,7 @@ pub fn testKvCreateExisting(
                 );
                 return;
             };
+            defer entry.deinit();
             if (!std.mem.eql(
                 u8,
                 entry.value,
@@ -8028,7 +8045,7 @@ pub fn testKvUpdateWrongRev(
                 return;
             };
             // Verify value and revision
-            const entry = (kv.get(
+            var entry = (kv.get(
                 "cas",
             ) catch {
                 reportResult(
@@ -8045,6 +8062,7 @@ pub fn testKvUpdateWrongRev(
                 );
                 return;
             };
+            defer entry.deinit();
             if (!std.mem.eql(
                 u8,
                 entry.value,
@@ -9166,7 +9184,7 @@ fn testKvAfterReconnect(
     };
 
     // Verify get
-    const entry = (kv.get("after") catch {
+    var entry = (kv.get("after") catch {
         reportResult(name, false, "get after");
         return;
     }) orelse {
@@ -9177,6 +9195,7 @@ fn testKvAfterReconnect(
         );
         return;
     };
+    defer entry.deinit();
 
     if (!std.mem.eql(u8, entry.value, "v2")) {
         reportResult(
@@ -10143,7 +10162,7 @@ pub fn testCrossVerifyKvGet(
     defer io.deinit();
 
     // CLI creates bucket and puts value
-    _ = runNatsCli(
+    const add_out = runNatsCli(
         allocator,
         io.io(),
         &.{ "kv", "add", "CROSS_GET", "--storage", "memory" },
@@ -10155,8 +10174,9 @@ pub fn testCrossVerifyKvGet(
         );
         return;
     };
+    allocator.free(add_out);
 
-    _ = runNatsCli(
+    const put_out = runNatsCli(
         allocator,
         io.io(),
         &.{ "kv", "put", "CROSS_GET", "greeting", "hello-from-cli" },
@@ -10168,6 +10188,7 @@ pub fn testCrossVerifyKvGet(
         );
         return;
     };
+    allocator.free(put_out);
 
     // Zig reads it
     const client = nats.Client.connect(
@@ -10199,7 +10220,7 @@ pub fn testCrossVerifyKvGet(
         return;
     };
 
-    const entry = (kv.get("greeting") catch {
+    var entry = (kv.get("greeting") catch {
         reportResult("cross_kv_get", false, "get");
         return;
     }) orelse {
@@ -10210,6 +10231,7 @@ pub fn testCrossVerifyKvGet(
         );
         return;
     };
+    defer entry.deinit();
 
     if (entry.revision == 0) {
         reportResult(

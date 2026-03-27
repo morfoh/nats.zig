@@ -18,7 +18,6 @@ pub fn testClientBasic(allocator: std.mem.Allocator) void {
 
     var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
     defer io.deinit();
-
     const client = nats.Client.connect(allocator, io.io(), url, .{
         .name = "client-test",
         .sub_queue_size = 64,
