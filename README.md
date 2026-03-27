@@ -1,4 +1,4 @@
-![Zig](https://img.shields.io/badge/Zig-0.16.0--dev.2962-orange)
+![Zig](https://img.shields.io/badge/Zig-0.16.0--dev.3006-orange)
 
 <p align="center">
   <img src="logo/logo.png">
@@ -21,7 +21,7 @@ Built on `std.Io`.
 
 ## Requirements
 
-- Zig 0.16.0-dev.2962 or later
+- Zig 0.16.0-dev.3006 or later
 - NATS server (for running examples and tests)
 
 ## Installation
