@@ -1,4 +1,4 @@
-![Zig](https://img.shields.io/badge/Zig-0.16.0--dev.3006-orange)
+![Zig](https://img.shields.io/badge/Zig-0.16.0--dev.3066-orange)
 
 <p align="center">
   <img src="logo/logo.png">
@@ -21,7 +21,7 @@ Built on `std.Io`.
 
 ## Requirements
 
-- Zig 0.16.0-dev.3006 or later
+- Zig 0.16.0-dev.3066 or later
 - NATS server (for running examples and tests)
 
 ## Installation
@@ -1716,6 +1716,14 @@ if (client.connectedServerVersion()) |version| {
 | JS publish | `js.publish(subject, payload)` | `!Response(PubAck)` |
 | JS publish + opts | `js.publishWithOpts(subject, payload, opts)` | `!Response(PubAck)` |
 | Last API error | `js.lastApiError()` | `?ApiError` |
+| **Async Publish** | | |
+| Init async publisher | `AsyncPublisher.init(&js, opts)` | `!AsyncPublisher` |
+| Async publish | `ap.publish(subject, payload)` | `!*PubAckFuture` |
+| Async publish + opts | `ap.publishWithOpts(subject, payload, opts)` | `!*PubAckFuture` |
+| Wait for ack | `future.wait(timeout_ms)` | `!PubAck` |
+| Pending count | `ap.publishAsyncPending()` | `u32` |
+| Wait all complete | `ap.waitComplete(timeout_ms)` | `!void` |
+| Cleanup publisher | `ap.cleanup()` | `void` |
 | **Pull Consumers** | | |
 | Fetch messages | `pull.fetch(opts)` | `!FetchResult` |
 | Fetch no wait | `pull.fetchNoWait(max)` | `!FetchResult` |
@@ -1795,7 +1803,7 @@ zig build fmt
 | JetStream Ordered Consumer | Implemented |
 | Key-Value Store | Implemented |
 | Object Store | Planned |
-| Async Publish | Planned |
+| Async Publish | Implemented |
 
 ## Related Projects
 

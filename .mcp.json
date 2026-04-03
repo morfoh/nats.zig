@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "nats": {
+      "command": "npx",
+      "args": ["tsx", "/home/m64/space/synadia/ai/nats-ai-agents/packages/claude-code/index.ts"],
+      "env": {
+        "NATS_AGENT_NAME": "nats-zig-clean"
+      }
+    }
+  }
+}
+
