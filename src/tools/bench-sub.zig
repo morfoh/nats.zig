@@ -2,11 +2,15 @@
 //!
 //! Measures subscribe throughput using Client.
 //! Usage: bench-sub <subject> [--msgs=N]
+//!
+//! Backend: pick at build time with -Dio_backend=threaded|evented.
+//! Default is Threaded.
 
 const std = @import("std");
 const nats = @import("nats");
 const assert = std.debug.assert;
 const bench = @import("bench_common.zig");
+const io_backend = @import("io_backend");
 
 const Allocator = std.mem.Allocator;
 
@@ -26,7 +30,17 @@ pub fn main(init: std.process.Init) !void {
         std.process.exit(1);
     };
 
-    runBenchmark(init.io, allocator, config) catch |err| {
+    // Each Client needs its own Io (1:1 design). We create the
+    // backend here so this benchmark process can compare backends
+    // by flipping -Dio_backend=... at build time.
+    var backend: io_backend.Backend = undefined;
+    io_backend.init(&backend, allocator) catch |err| {
+        std.debug.print("Failed to init Io backend: {}\n", .{err});
+        std.process.exit(1);
+    };
+    defer backend.deinit();
+
+    runBenchmark(backend.io(), allocator, config) catch |err| {
         std.debug.print("Benchmark failed: {}\n", .{err});
         std.process.exit(1);
     };

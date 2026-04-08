@@ -19,7 +19,7 @@ pub fn testConcurrentSubscribe(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -95,7 +95,7 @@ pub fn testRapidPublish(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -162,7 +162,7 @@ pub fn testConcurrentSubUnsub(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -214,7 +214,7 @@ pub fn testRaceSubscribeVsDelivery(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const publisher = nats.Client.connect(
@@ -275,7 +275,7 @@ pub fn testRaceUnsubscribeVsDelivery(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{
@@ -314,7 +314,7 @@ pub fn testSidAllocationRecycling(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -377,7 +377,7 @@ pub fn testMultipleClientsSharedIo(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client1 = nats.Client.connect(
@@ -451,7 +451,7 @@ pub fn testParallelReceive(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -523,7 +523,7 @@ pub fn testRapidFlushOperations(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -572,7 +572,7 @@ pub fn testStatsConcurrency(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(

@@ -48,10 +48,7 @@ fn testAsyncSelectTimeout(allocator: Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var threaded: Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const threaded = utils.newIo(allocator);
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -118,10 +115,7 @@ fn testAsyncSelectMessage(allocator: Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var threaded: Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const threaded = utils.newIo(allocator);
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -257,10 +251,7 @@ fn testAsyncConcurrentWorkers(allocator: Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var threaded: Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const threaded = utils.newIo(allocator);
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -449,10 +440,7 @@ fn testAsyncParallelSubscriptions(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var threaded: Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const threaded = utils.newIo(allocator);
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -560,10 +548,7 @@ fn testAsyncCancellation(allocator: Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var threaded: Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const threaded = utils.newIo(allocator);
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -615,10 +600,7 @@ fn testAsyncCancelWithPendingMessage(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var threaded: Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const threaded = utils.newIo(allocator);
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -698,10 +680,7 @@ fn testBatchReceive(allocator: Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var threaded: Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const threaded = utils.newIo(allocator);
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -774,10 +753,7 @@ fn testTryNextBatch(allocator: Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var threaded: Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const threaded = utils.newIo(allocator);
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -877,10 +853,7 @@ fn testAsyncDeferCleanup(allocator: Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var threaded: Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const threaded = utils.newIo(allocator);
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -929,10 +902,7 @@ fn testSelectMultipleSubs(allocator: Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var threaded: Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const threaded = utils.newIo(allocator);
     defer threaded.deinit();
     const io = threaded.io();
 

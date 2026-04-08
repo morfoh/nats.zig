@@ -18,7 +18,7 @@ pub fn testRequestMethod(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -56,7 +56,7 @@ pub fn testRequestReturns(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -107,7 +107,7 @@ pub fn testReplyToPreserved(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -154,7 +154,7 @@ pub fn testRequestReplySuccess(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io_r: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io_r = utils.newIo(allocator);
     defer io_r.deinit();
     const responder = nats.Client.connect(
         allocator,
@@ -167,7 +167,7 @@ pub fn testRequestReplySuccess(allocator: std.mem.Allocator) void {
     };
     defer responder.deinit();
 
-    var io_req: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io_req = utils.newIo(allocator);
     defer io_req.deinit();
     const requester = nats.Client.connect(
         allocator,
@@ -231,7 +231,7 @@ pub fn testCrossClientRequestReply(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io_a: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io_a = utils.newIo(allocator);
     defer io_a.deinit();
     const client_a = nats.Client.connect(
         allocator,
@@ -244,7 +244,7 @@ pub fn testCrossClientRequestReply(allocator: std.mem.Allocator) void {
     };
     defer client_a.deinit();
 
-    var io_b: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io_b = utils.newIo(allocator);
     defer io_b.deinit();
     const client_b = nats.Client.connect(
         allocator,
@@ -308,7 +308,7 @@ pub fn testRequestTimeout(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{
@@ -363,7 +363,7 @@ pub fn testRequestWithLargePayload(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io_r: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io_r = utils.newIo(allocator);
     defer io_r.deinit();
     const responder = nats.Client.connect(
         allocator,
@@ -376,7 +376,7 @@ pub fn testRequestWithLargePayload(allocator: std.mem.Allocator) void {
     };
     defer responder.deinit();
 
-    var io_req: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io_req = utils.newIo(allocator);
     defer io_req.deinit();
     const requester = nats.Client.connect(
         allocator,
@@ -447,7 +447,7 @@ pub fn testMultipleRequestsSequential(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io_r: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io_r = utils.newIo(allocator);
     defer io_r.deinit();
     const responder = nats.Client.connect(
         allocator,
@@ -460,7 +460,7 @@ pub fn testMultipleRequestsSequential(allocator: std.mem.Allocator) void {
     };
     defer responder.deinit();
 
-    var io_req: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io_req = utils.newIo(allocator);
     defer io_req.deinit();
     const requester = nats.Client.connect(
         allocator,

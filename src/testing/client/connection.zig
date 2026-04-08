@@ -13,7 +13,7 @@ const test_token = utils.test_token;
 const ServerManager = utils.ServerManager;
 
 pub fn testConnectionRefused(allocator: std.mem.Allocator) void {
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const result = nats.Client.connect(
@@ -35,7 +35,7 @@ pub fn testConsecutiveConnections(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     for (0..3) |i| {
@@ -64,7 +64,7 @@ pub fn testIsConnectedState(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -98,7 +98,7 @@ pub fn testReconnection(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -136,7 +136,7 @@ pub fn testServerRestartNewConnection(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io1: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io1 = utils.newIo(allocator);
     defer io1.deinit();
 
     const client1 = nats.Client.connect(
@@ -169,7 +169,7 @@ pub fn testServerRestartNewConnection(
         return;
     };
 
-    var io2: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io2 = utils.newIo(allocator);
     defer io2.deinit();
 
     const client2 = nats.Client.connect(
@@ -198,7 +198,7 @@ pub fn testConnectionStateAfterOps(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -246,7 +246,7 @@ pub fn testRapidConnectDisconnect(allocator: std.mem.Allocator) void {
     var success: u32 = 0;
 
     for (0..CYCLES) |_| {
-        var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+        const io = utils.newIo(allocator);
         defer io.deinit();
 
         const client = nats.Client.connect(
@@ -283,7 +283,7 @@ pub fn testConnectionOptions(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{
@@ -320,7 +320,7 @@ pub fn testConnectionDrain(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -366,7 +366,7 @@ pub fn testConnectionDrain(allocator: std.mem.Allocator) void {
 
 /// Verifies invalid URLs are rejected properly.
 pub fn testInvalidUrlHandling(allocator: std.mem.Allocator) void {
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const empty_result = nats.Client.connect(
@@ -401,7 +401,7 @@ pub fn testConnectionStateTransitions(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -439,7 +439,7 @@ pub fn testManyClientSubscriptions(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(

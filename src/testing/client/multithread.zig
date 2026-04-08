@@ -34,10 +34,7 @@ pub fn testMultiThreadPublish(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -180,10 +177,7 @@ pub fn testMultiThreadSubscribe(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -276,10 +270,7 @@ pub fn testMultiThreadStats(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -360,10 +351,7 @@ pub fn testMultiThreadMixed(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -501,10 +489,7 @@ pub fn testMultiThreadRequest(
     const url = formatUrl(&url_buf, test_port);
 
     // Requester client
-    var io_req: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io_req = utils.newIo(allocator);
     defer io_req.deinit();
 
     const requester = nats.Client.connect(
@@ -523,10 +508,7 @@ pub fn testMultiThreadRequest(
     defer requester.deinit();
 
     // Responder client
-    var io_resp: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io_resp = utils.newIo(allocator);
     defer io_resp.deinit();
 
     const responder = nats.Client.connect(
@@ -672,10 +654,7 @@ pub fn testSubSlotIntegrity(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(

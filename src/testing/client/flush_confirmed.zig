@@ -16,7 +16,7 @@ pub fn testFlushConfirmedBasic(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -71,7 +71,7 @@ pub fn testFlushConfirmedMultipleMessages(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -137,7 +137,7 @@ pub fn testFlushConfirmedNoSideEffects(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -207,7 +207,7 @@ pub fn testFlushConfirmedVsFlush(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -277,7 +277,7 @@ pub fn testFlushConfirmedNotConnected(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -312,7 +312,7 @@ pub fn testFlushConfirmedLargePayload(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -374,7 +374,7 @@ pub fn testFlushConfirmedRapidFire(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -440,7 +440,7 @@ pub fn testFlushConfirmedTimeout(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(

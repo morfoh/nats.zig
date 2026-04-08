@@ -16,7 +16,7 @@ pub fn testAuthentication(allocator: std.mem.Allocator) void {
     var url_buf: [128]u8 = undefined;
     const url = formatAuthUrl(&url_buf, auth_port, test_token);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{ .reconnect = false }) catch {
@@ -36,7 +36,7 @@ pub fn testAuthenticationFailure(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, auth_port); // No token!
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const result = nats.Client.connect(allocator, io.io(), url, .{ .reconnect = false });
@@ -53,7 +53,7 @@ pub fn testAuthenticatedPubSub(allocator: std.mem.Allocator) void {
     var url_buf: [128]u8 = undefined;
     const url = formatAuthUrl(&url_buf, auth_port, test_token);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{ .reconnect = false }) catch {
@@ -85,7 +85,7 @@ pub fn testEmptyToken(allocator: std.mem.Allocator) void {
     var url_buf: [128]u8 = undefined;
     const url = formatAuthUrl(&url_buf, auth_port, "");
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const result = nats.Client.connect(allocator, io.io(), url, .{ .reconnect = false });
@@ -108,7 +108,7 @@ pub fn testTokenSpecialChars(allocator: std.mem.Allocator) void {
     var url_buf: [128]u8 = undefined;
     const url = formatAuthUrl(&url_buf, auth_port, test_token);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{ .reconnect = false }) catch {
@@ -125,7 +125,7 @@ pub fn testTokenSpecialChars(allocator: std.mem.Allocator) void {
 }
 
 pub fn testAuthRejectionRecovery(allocator: std.mem.Allocator) void {
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     var bad_url_buf: [128]u8 = undefined;
@@ -159,7 +159,7 @@ pub fn testAuthRejectionRecovery(allocator: std.mem.Allocator) void {
 }
 
 pub fn testMultipleAuthAttempts(allocator: std.mem.Allocator) void {
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     var url_buf: [128]u8 = undefined;
@@ -188,7 +188,7 @@ pub fn testAuthRequiredDetection(allocator: std.mem.Allocator) void {
     var url_buf: [128]u8 = undefined;
     const url = formatAuthUrl(&url_buf, auth_port, test_token);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{ .reconnect = false }) catch {

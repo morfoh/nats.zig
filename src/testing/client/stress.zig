@@ -16,7 +16,7 @@ pub fn testStress500Messages(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const publisher = nats.Client.connect(
@@ -84,7 +84,7 @@ pub fn testStress1000Messages(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{
@@ -132,7 +132,7 @@ pub fn testStress2000Messages(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{
@@ -182,7 +182,7 @@ pub fn testPayload30KB(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -230,7 +230,7 @@ pub fn testManySubscriptions(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -278,7 +278,7 @@ pub fn testPayloadBoundary(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -339,7 +339,7 @@ pub fn testFiveConcurrentClients(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var ios: [5]std.Io.Threaded = undefined;
+    var ios: [5]*utils.TestIo = undefined;
     var clients: [5]?*nats.Client = [_]?*nats.Client{null} ** 5;
     var count: usize = 0;
 
@@ -353,7 +353,7 @@ pub fn testFiveConcurrentClients(allocator: std.mem.Allocator) void {
     }
 
     for (0..5) |i| {
-        ios[i] = .init(allocator, .{ .environ = .empty });
+        ios[i] = utils.newIo(allocator);
         clients[i] = nats.Client.connect(
             allocator,
             ios[i].io(),

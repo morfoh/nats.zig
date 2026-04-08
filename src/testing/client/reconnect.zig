@@ -61,7 +61,7 @@ fn testAutoReconnectBasic(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{
@@ -109,7 +109,7 @@ fn testSubscriptionRestored(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{
@@ -183,7 +183,7 @@ fn testMultipleSubscriptionsRestored(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{
@@ -265,7 +265,7 @@ fn testReconnectMaxAttempts(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{
@@ -313,7 +313,7 @@ fn testReconnectDisabled(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{
@@ -352,7 +352,7 @@ fn testPendingBufferFlush(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{
@@ -403,7 +403,7 @@ fn testPublishDuringReconnect(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{
@@ -466,7 +466,7 @@ fn testReconnectStatsIncrement(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{
@@ -511,7 +511,7 @@ fn testReconnectWithQueueGroup(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{
@@ -560,9 +560,9 @@ fn testMultiClientReconnect(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io1: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io1 = utils.newIo(allocator);
     defer io1.deinit();
-    var io2: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io2 = utils.newIo(allocator);
     defer io2.deinit();
 
     const client1 = nats.Client.connect(allocator, io1.io(), url, .{
@@ -617,7 +617,7 @@ fn testReconnectPreservesSid(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{
@@ -662,7 +662,7 @@ fn testReconnectWildcardSub(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{
@@ -711,7 +711,7 @@ fn testReconnectBackoff(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{
@@ -754,7 +754,7 @@ fn testCustomReconnectDelay(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, reconnect_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     // Reset call counter
@@ -820,7 +820,7 @@ fn testHealthCheckReconnect(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{
@@ -867,7 +867,7 @@ fn testFailoverToSecondServer(
     const url1 = formatUrl(&url_buf1, failover_port_1);
     const url2 = formatUrl(&url_buf2, failover_port_2);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     manager.stopAll(io.io());
@@ -951,7 +951,7 @@ fn testFailoverRoundRobin(
     const url2 = formatUrl(&url_buf2, failover_port_4);
     const url3 = formatUrl(&url_buf3, failover_port_5);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     manager.stopAll(io.io());
@@ -1027,7 +1027,7 @@ fn testAllServersDownThenRecover(
     const url1 = formatUrl(&url_buf1, failover_port_6);
     const url2 = formatUrl(&url_buf2, failover_port_7);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     manager.stopAll(io.io());
@@ -1097,7 +1097,7 @@ fn testServerCooldownRespected(
     const url1 = formatUrl(&url_buf1, failover_port_8);
     const url2 = formatUrl(&url_buf2, failover_port_9);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     manager.stopAll(io.io());
@@ -1141,7 +1141,7 @@ fn testMultipleSubsActivelyReceiving(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     manager.stopAll(io.io());
@@ -1287,7 +1287,7 @@ fn testHighVolumePendingBuffer(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     manager.stopAll(io.io());
@@ -1379,9 +1379,9 @@ fn testQueueGroupMultiClientReconnect(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io1: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io1 = utils.newIo(allocator);
     defer io1.deinit();
-    var io2: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io2 = utils.newIo(allocator);
     defer io2.deinit();
 
     manager.stopAll(io1.io());
@@ -1511,7 +1511,7 @@ fn testRapidServerRestarts(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     manager.stopAll(io.io());
@@ -1584,7 +1584,7 @@ fn testMultipleReconnectionCycles(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     manager.stopAll(io.io());
@@ -1682,7 +1682,7 @@ fn testLongDisconnectionRecovery(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     manager.stopAll(io.io());

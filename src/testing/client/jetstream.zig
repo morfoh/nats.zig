@@ -28,10 +28,7 @@ pub fn testStreamCreateAndInfo(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -148,10 +145,7 @@ pub fn testPublishAndAck(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -275,10 +269,7 @@ pub fn testConsumerCRUD(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -408,10 +399,7 @@ pub fn testApiError(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -485,10 +473,7 @@ pub fn testStreamNames(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -615,10 +600,7 @@ pub fn testStreamList(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -717,10 +699,7 @@ pub fn testConsumerNames(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -836,10 +815,7 @@ pub fn testConsumerList(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -957,10 +933,7 @@ pub fn testAccountInfo(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -1011,10 +984,7 @@ pub fn testMetadata(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -1161,10 +1131,7 @@ pub fn testFetchNoWait(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -1264,10 +1231,7 @@ pub fn testMessages(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -1394,10 +1358,7 @@ pub fn testConsume(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -1540,10 +1501,7 @@ pub fn testOrderedConsumer(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -1672,10 +1630,7 @@ pub fn testAckPreventsRedeliver(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -1780,10 +1735,7 @@ pub fn testNakCausesRedeliver(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -1912,10 +1864,7 @@ pub fn testTermStopsRedeliver(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -2025,10 +1974,7 @@ pub fn testBatchFetch(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -2183,10 +2129,7 @@ pub fn testPublishDedup(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -2301,10 +2244,7 @@ pub fn testPublishExpectedSeq(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -2414,10 +2354,7 @@ pub fn testPurgeStream(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -2543,10 +2480,7 @@ pub fn testStreamUpdate(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -2619,10 +2553,7 @@ pub fn testInProgress(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -2731,10 +2662,7 @@ pub fn testConsumerNotFound(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -2827,10 +2755,7 @@ pub fn testStreamBySubject(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -2922,10 +2847,7 @@ pub fn testKvPutGet(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -3034,10 +2956,7 @@ pub fn testKvCreate(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -3108,10 +3027,7 @@ pub fn testKvUpdate(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -3204,10 +3120,7 @@ pub fn testKvDelete(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -3291,10 +3204,7 @@ pub fn testKvKeys(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -3373,10 +3283,7 @@ pub fn testKvHistory(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -3477,10 +3384,7 @@ pub fn testKvWatch(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -3573,10 +3477,7 @@ pub fn testKvBucketLifecycle(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -3692,10 +3593,7 @@ pub fn testFilteredConsumer(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -3846,10 +3744,7 @@ pub fn testPurgeSubject(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -3985,10 +3880,7 @@ pub fn testPaginatedStreamNames(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -4089,10 +3981,7 @@ pub fn testGetMsg(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -4228,10 +4117,7 @@ pub fn testGetLastMsgForSubject(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -4398,10 +4284,7 @@ pub fn testDeleteMsg(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -4524,10 +4407,7 @@ pub fn testSecureDeleteMsg(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -4650,10 +4530,7 @@ pub fn testCreateOrUpdateStream(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -4774,10 +4651,7 @@ pub fn testCreateOrUpdateConsumer(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -4916,10 +4790,7 @@ pub fn testPauseResumeConsumer(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -5078,10 +4949,7 @@ pub fn testPushConsumerBasic(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -5248,10 +5116,7 @@ pub fn testPublishWithTTL(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -5352,10 +5217,7 @@ pub fn testKvUpdateBucket(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -5470,10 +5332,7 @@ pub fn testKvCreateOrUpdateBucket(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -5593,10 +5452,7 @@ pub fn testKvPurgeDeletes(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -5817,10 +5673,7 @@ pub fn testKvStoreNames(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -5972,10 +5825,7 @@ pub fn testKvWatchIgnoreDeletes(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        std.heap.page_allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(std.heap.page_allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -6102,10 +5952,7 @@ pub fn testKvWatchUpdatesOnly(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        std.heap.page_allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(std.heap.page_allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -6238,10 +6085,7 @@ pub fn testKvListKeys(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        std.heap.page_allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(std.heap.page_allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -6384,10 +6228,7 @@ pub fn testDoubleAck(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -6499,10 +6340,7 @@ pub fn testUpdatePushConsumer(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -6618,10 +6456,7 @@ pub fn testGetPushConsumer(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -6711,10 +6546,7 @@ pub fn testKvPutString(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -6803,10 +6635,7 @@ pub fn testKvDeleteLastRev(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -6894,10 +6723,7 @@ pub fn testKvPurgeLastRev(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -6987,10 +6813,7 @@ pub fn testKvListKeysFiltered(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        std.heap.page_allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(std.heap.page_allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -7087,10 +6910,7 @@ pub fn testKvHistoryWithOpts(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -7200,10 +7020,7 @@ pub fn testConnOptions(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -7267,10 +7084,7 @@ pub fn testKvCreateWithTTL(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -7371,10 +7185,7 @@ pub fn testPublishAsync(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -7529,10 +7340,7 @@ pub fn testPublishAsyncFutureWait(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -7635,10 +7443,7 @@ pub fn testKvEmptyValue(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -7722,10 +7527,7 @@ pub fn testKvKeySpecialChars(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -7875,10 +7677,7 @@ pub fn testKvCreateExisting(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -7981,10 +7780,7 @@ pub fn testKvUpdateWrongRev(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -8119,10 +7915,7 @@ pub fn testStreamMaxMsgs(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -8238,10 +8031,7 @@ pub fn testConsumerMaxDeliver(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -8368,10 +8158,7 @@ pub fn testFetchTimeout(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -8468,10 +8255,7 @@ pub fn testAsyncPublishDedup(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -8580,10 +8364,7 @@ pub fn testAsyncPublishNoStream(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -8647,10 +8428,7 @@ pub fn testKvManyKeys(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -8771,10 +8549,7 @@ pub fn testAsyncPublishBurst(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -8891,10 +8666,7 @@ fn testJsPublishAfterReconnect(
 ) void {
     const name = "js_pub_after_recon";
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     // Start JS server on reconnect port
@@ -9050,10 +8822,7 @@ fn testKvAfterReconnect(
 ) void {
     const name = "kv_after_recon";
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     // Start JS server
@@ -9222,10 +8991,7 @@ fn testJsFetchAfterReconnect(
 ) void {
     const name = "js_fetch_after_recon";
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     _ = manager.startServer(
@@ -9462,10 +9228,7 @@ fn testAsyncDuringDisconnect(
 ) void {
     const name = "js_async_disconnect";
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     _ = manager.startServer(
@@ -9613,10 +9376,7 @@ fn testPushAfterReconnect(
 ) void {
     const name = "js_push_after_recon";
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     _ = manager.startServer(
@@ -9908,10 +9668,7 @@ pub fn runAll(
         .{},
     );
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     _ = manager.startServer(
@@ -10074,10 +9831,7 @@ pub fn testCrossVerifyKvPut(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -10155,10 +9909,7 @@ pub fn testCrossVerifyKvGet(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, js_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     // CLI creates bucket and puts value

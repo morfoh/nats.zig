@@ -21,10 +21,7 @@ pub fn testFiveThousandSubs(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const sub_client = nats.Client.connect(
@@ -157,10 +154,7 @@ pub fn testSubUnsubChurn(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -227,10 +221,7 @@ pub fn testSubsThenResubscribe(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -354,10 +345,7 @@ pub fn testWildcardFanOut(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -480,7 +468,7 @@ pub fn testTenClientsManySubs(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var ios: [NUM_CLIENTS]std.Io.Threaded = undefined;
+    var ios: [NUM_CLIENTS]*utils.TestIo = undefined;
     var clients: [NUM_CLIENTS]?*nats.Client =
         [_]?*nats.Client{null} ** NUM_CLIENTS;
     var io_count: usize = 0;
@@ -493,7 +481,7 @@ pub fn testTenClientsManySubs(
     }
 
     for (0..NUM_CLIENTS) |i| {
-        ios[i] = .init(allocator, .{ .environ = .empty });
+        ios[i] = utils.newIo(allocator);
         clients[i] = nats.Client.connect(
             allocator,
             ios[i].io(),
@@ -555,10 +543,7 @@ pub fn testTenClientsManySubs(
     }
 
     // Publisher
-    var pub_io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const pub_io = utils.newIo(allocator);
     defer pub_io.deinit();
 
     const publisher = nats.Client.connect(
@@ -630,7 +615,7 @@ pub fn testMultiPubMultiSub(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var sub_ios: [NUM_SUB]std.Io.Threaded = undefined;
+    var sub_ios: [NUM_SUB]*utils.TestIo = undefined;
     var sub_clients: [NUM_SUB]?*nats.Client =
         [_]?*nats.Client{null} ** NUM_SUB;
     var sub_io_count: usize = 0;
@@ -643,10 +628,7 @@ pub fn testMultiPubMultiSub(
     }
 
     for (0..NUM_SUB) |i| {
-        sub_ios[i] = .init(
-            allocator,
-            .{ .environ = .empty },
-        );
+        sub_ios[i] = utils.newIo(allocator);
         sub_clients[i] = nats.Client.connect(
             allocator,
             sub_ios[i].io(),
@@ -689,7 +671,7 @@ pub fn testMultiPubMultiSub(
         }
     }
 
-    var pub_ios: [NUM_PUB]std.Io.Threaded = undefined;
+    var pub_ios: [NUM_PUB]*utils.TestIo = undefined;
     var pub_clients: [NUM_PUB]?*nats.Client =
         [_]?*nats.Client{null} ** NUM_PUB;
     var pub_io_count: usize = 0;
@@ -702,10 +684,7 @@ pub fn testMultiPubMultiSub(
     }
 
     for (0..NUM_PUB) |i| {
-        pub_ios[i] = .init(
-            allocator,
-            .{ .environ = .empty },
-        );
+        pub_ios[i] = utils.newIo(allocator);
         pub_clients[i] = nats.Client.connect(
             allocator,
             pub_ios[i].io(),
@@ -782,10 +761,7 @@ pub fn testPayloadSizes(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -912,10 +888,7 @@ pub fn testMaxPayload1MB(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -1004,10 +977,7 @@ pub fn testOverMaxPayload(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -1057,10 +1027,7 @@ pub fn testBurstPublish100K(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const pub_client = nats.Client.connect(
@@ -1145,10 +1112,7 @@ pub fn testLargePayloadBurst(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const pub_client = nats.Client.connect(
@@ -1241,10 +1205,7 @@ pub fn testManySubjectsPublish(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -1332,10 +1293,7 @@ pub fn testSlowConsumer(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const sub_client = nats.Client.connect(
@@ -1400,10 +1358,7 @@ pub fn testQueueFillAndRecover(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const sub_client = nats.Client.connect(
@@ -1500,10 +1455,7 @@ pub fn testSidMapTombstoneStress(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(

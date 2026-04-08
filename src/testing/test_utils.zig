@@ -81,3 +81,54 @@ pub fn getSummary() struct { passed: u32, failed: u32, total: u32 } {
         .total = tests_passed + tests_failed,
     };
 }
+
+const io_backend = @import("io_backend");
+
+/// Heap-allocated wrapper around `io_backend.Backend` for use by
+/// integration tests. Each `newIo()` call returns a fresh
+/// `*TestIo` that owns its backend; calling `deinit()` releases
+/// both the backend and the wrapper itself.
+///
+/// Existing test code that does:
+///
+///     var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+///     defer io.deinit();
+///
+/// becomes:
+///
+///     const io = utils.newIo(allocator);
+///     defer io.deinit();
+///
+/// All `io.io()` and `io.deinit()` calls work unchanged through
+/// the pointer because Zig auto-dereferences method calls when
+/// the receiver matches.
+pub const TestIo = struct {
+    backend: io_backend.Backend,
+    allocator: std.mem.Allocator,
+
+    /// Tears down the backend and frees the wrapper. Must be
+    /// called once per `newIo()` call (typically via `defer`).
+    pub fn deinit(self: *TestIo) void {
+        self.backend.deinit();
+        self.allocator.destroy(self);
+    }
+
+    /// Returns the abstract `std.Io` for passing to client APIs.
+    pub fn io(self: *TestIo) std.Io {
+        return self.backend.io();
+    }
+};
+
+/// Allocates and initializes a `TestIo` wrapper. Panics on
+/// allocation or backend init failure — acceptable for tests
+/// because every existing test function returns `void`, not
+/// `!void`, and propagating an errorable here would force a
+/// viral signature change across the entire suite.
+pub fn newIo(allocator: std.mem.Allocator) *TestIo {
+    const t = allocator.create(TestIo) catch
+        @panic("OOM in test newIo");
+    t.allocator = allocator;
+    io_backend.init(&t.backend, allocator) catch
+        @panic("io_backend init failed in test newIo");
+    return t;
+}

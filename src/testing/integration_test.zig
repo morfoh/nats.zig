@@ -28,7 +28,13 @@ const nkey_config_path = "/tmp/nats-nkey-test.conf";
 
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
-    const io = init.io;
+
+    // Use the io_backend selector instead of init.io so
+    // -Dio_backend=threaded|evented is exercised end-to-end by
+    // the test runner itself (server startup, file I/O, sleeps).
+    const test_io = utils.newIo(allocator);
+    defer test_io.deinit();
+    const io = test_io.io();
 
     std.debug.print("\n=== NATS Integration Tests ===\n\n", .{});
 

@@ -162,10 +162,7 @@ pub fn testDynamicJwtConnect(
     allocator: std.mem.Allocator,
     manager: *ServerManager,
 ) void {
-    var threaded: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const threaded = utils.newIo(allocator);
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -245,10 +242,7 @@ pub fn testDynamicJwtPubSub(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, dynamic_jwt_port);
 
-    var threaded: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const threaded = utils.newIo(allocator);
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -353,10 +347,7 @@ pub fn runAll(
 
     // Stop dynamic JWT server (last started)
     const idx = manager.count() - 1;
-    var threaded: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const threaded = utils.newIo(allocator);
     defer threaded.deinit();
     const io = threaded.io();
 

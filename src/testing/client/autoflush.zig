@@ -43,10 +43,7 @@ fn testAutoflushBasicDelivery(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -131,10 +128,7 @@ fn testAutoflushMultipleMessages(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -227,10 +221,7 @@ fn testAutoflushHighThroughput(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -320,10 +311,7 @@ fn testAutoflushDuringDisconnect(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, autoflush_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const server = manager.startServer(
@@ -430,10 +418,7 @@ fn testAutoflushTLS(
     var url_buf: [64]u8 = undefined;
     const url = formatTlsUrl(&url_buf, tls_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const ca_path = getCaFilePath(
@@ -543,10 +528,7 @@ fn testAutoflushLatencyBound(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -609,15 +591,9 @@ fn testAutoflushWithSubscribe(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io1: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io1 = utils.newIo(allocator);
     defer io1.deinit();
-    var io2: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io2 = utils.newIo(allocator);
     defer io2.deinit();
 
     const client1 = nats.Client.connect(
@@ -704,10 +680,7 @@ fn testAutoflushNoBatching(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -774,20 +747,11 @@ fn testAutoflushMultiClient(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io1: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io1 = utils.newIo(allocator);
     defer io1.deinit();
-    var io2: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io2 = utils.newIo(allocator);
     defer io2.deinit();
-    var io3: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io3 = utils.newIo(allocator);
     defer io3.deinit();
 
     const client1 = nats.Client.connect(
@@ -941,15 +905,9 @@ fn testAutoflushPublishRequest(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io1: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io1 = utils.newIo(allocator);
     defer io1.deinit();
-    var io2: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io2 = utils.newIo(allocator);
     defer io2.deinit();
 
     const pub_client = nats.Client.connect(
@@ -1064,10 +1022,7 @@ fn testAutoflushPublishWithHeaders(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -1189,10 +1144,7 @@ fn testAutoflushPubReqWithHeaders(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -1316,10 +1268,7 @@ fn testAutoflushPubWithHeaderMap(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -1440,10 +1389,7 @@ fn testAutoflushPublishMsg(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -1531,15 +1477,9 @@ fn testAutoflushAutoUnsubscribe(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io1: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io1 = utils.newIo(allocator);
     defer io1.deinit();
-    var io2: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io2 = utils.newIo(allocator);
     defer io2.deinit();
 
     const pub_client = nats.Client.connect(
@@ -1657,15 +1597,9 @@ fn testAutoflushDrain(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io1: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io1 = utils.newIo(allocator);
     defer io1.deinit();
-    var io2: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io2 = utils.newIo(allocator);
     defer io2.deinit();
 
     const pub_client = nats.Client.connect(
@@ -1806,15 +1740,9 @@ fn testAutoflushUnsubscribe(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io1: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io1 = utils.newIo(allocator);
     defer io1.deinit();
-    var io2: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io2 = utils.newIo(allocator);
     defer io2.deinit();
 
     const pub_client = nats.Client.connect(

@@ -3,18 +3,29 @@
 //! Minimal "hello world" - connect, subscribe, publish, receive one message.
 //! A starting point for learning the NATS Zig client.
 //! Run with: zig build run-simple
+//!   or:    zig build run-simple -Dio_backend=evented
 //!
 //! Prerequisites: nats-server running on localhost:4222
 //!   nats-server -DV
 
 const std = @import("std");
 const nats = @import("nats");
+const io_backend = @import("io_backend");
 
 /// Main entry point using Zig 0.16's std.process.Init.
 /// Init provides: gpa (allocator), io (async I/O), arena, args, environ.
+///
+/// IMPORTANT: each Client needs its own Io. We create the backend
+/// here next to the Client so it owns its own execution context.
+/// We deliberately do NOT reuse `init.io` so the build option
+/// `-Dio_backend=...` can pick between Threaded and Evented.
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
-    const io = init.io;
+
+    var backend: io_backend.Backend = undefined;
+    try io_backend.init(&backend, allocator);
+    defer backend.deinit();
+    const io = backend.io();
 
     // Connect to NATS server
     const client = try nats.Client.connect(

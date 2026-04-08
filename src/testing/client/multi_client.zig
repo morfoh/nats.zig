@@ -16,7 +16,7 @@ pub fn testCrossClientRouting(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const publisher = nats.Client.connect(
@@ -74,7 +74,7 @@ pub fn testMultipleClients(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client1 = nats.Client.connect(
@@ -123,7 +123,7 @@ pub fn testClientHighRate(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const publisher = nats.Client.connect(
@@ -201,7 +201,7 @@ pub fn testThreeClientChain(allocator: std.mem.Allocator) void {
     const url = formatUrl(&url_buf, test_port);
 
     // Client A - initial publisher
-    var io_a: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io_a = utils.newIo(allocator);
     defer io_a.deinit();
     const client_a = nats.Client.connect(
         allocator,
@@ -215,7 +215,7 @@ pub fn testThreeClientChain(allocator: std.mem.Allocator) void {
     defer client_a.deinit();
 
     // Client B - middleware (receives from A, forwards to C)
-    var io_b: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io_b = utils.newIo(allocator);
     defer io_b.deinit();
     const client_b = nats.Client.connect(
         allocator,
@@ -229,7 +229,7 @@ pub fn testThreeClientChain(allocator: std.mem.Allocator) void {
     defer client_b.deinit();
 
     // Client C - final receiver
-    var io_c: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io_c = utils.newIo(allocator);
     defer io_c.deinit();
     const client_c = nats.Client.connect(
         allocator,
@@ -301,7 +301,7 @@ pub fn testMultipleSubscribersSameSubject(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(

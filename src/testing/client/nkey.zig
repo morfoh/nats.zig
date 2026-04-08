@@ -16,7 +16,7 @@ pub fn testNKeyAuthentication(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, nkey_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{
@@ -42,7 +42,7 @@ pub fn testNKeyAuthFailure(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, nkey_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const wrong_seed =
@@ -66,7 +66,7 @@ pub fn testNKeyPubSub(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, nkey_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{
@@ -104,7 +104,7 @@ pub fn testNKeyNoSeedFails(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, nkey_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const result = nats.Client.connect(allocator, io.io(), url, .{
@@ -124,7 +124,7 @@ pub fn testNKeyInvalidSeedFormat(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, nkey_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const result = nats.Client.connect(allocator, io.io(), url, .{
@@ -146,7 +146,7 @@ pub fn testNKeySeedFile(allocator: std.mem.Allocator) void {
     const url = formatUrl(&url_buf, nkey_port);
 
     // Create temp seed file using std.Io
-    var io_setup: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io_setup = utils.newIo(allocator);
     defer io_setup.deinit();
     const setup_io = io_setup.io();
 
@@ -167,7 +167,7 @@ pub fn testNKeySeedFile(allocator: std.mem.Allocator) void {
     file.close(setup_io);
 
     // Connect using seed file
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{
@@ -193,7 +193,7 @@ pub fn testNKeySeedFileMissing(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, nkey_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const result = nats.Client.connect(allocator, io.io(), url, .{
@@ -224,7 +224,7 @@ pub fn testNKeySigningCallback(allocator: std.mem.Allocator) void {
     var pubkey_buf: [56]u8 = undefined;
     const pubkey = kp.publicKey(&pubkey_buf);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{
@@ -269,7 +269,7 @@ pub fn testNKeyCallbackFails(allocator: std.mem.Allocator) void {
     var pubkey_buf: [56]u8 = undefined;
     const pubkey = kp.publicKey(&pubkey_buf);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const result = nats.Client.connect(allocator, io.io(), url, .{

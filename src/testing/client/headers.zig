@@ -13,7 +13,7 @@ pub fn testHeadersPublishSingle(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -75,7 +75,7 @@ pub fn testHeadersPublishMultiple(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -144,7 +144,7 @@ pub fn testHeadersPublishEmptyPayload(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -198,7 +198,7 @@ pub fn testHeadersPublishRequest(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -270,7 +270,7 @@ pub fn testHeadersRequestReply(allocator: std.mem.Allocator) void {
     const url = formatUrl(&url_buf, test_port);
 
     // Responder client
-    var io_r: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io_r = utils.newIo(allocator);
     defer io_r.deinit();
     const responder = nats.Client.connect(
         allocator,
@@ -283,7 +283,7 @@ pub fn testHeadersRequestReply(allocator: std.mem.Allocator) void {
     };
     defer responder.deinit();
 
-    var io_req: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io_req = utils.newIo(allocator);
     defer io_req.deinit();
     const requester = nats.Client.connect(
         allocator,
@@ -358,7 +358,7 @@ pub fn testHeadersRequestTimeout(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{
@@ -416,7 +416,7 @@ pub fn testHeadersCrossClient(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io_a: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io_a = utils.newIo(allocator);
     defer io_a.deinit();
     const client_a = nats.Client.connect(
         allocator,
@@ -429,7 +429,7 @@ pub fn testHeadersCrossClient(allocator: std.mem.Allocator) void {
     };
     defer client_a.deinit();
 
-    var io_b: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io_b = utils.newIo(allocator);
     defer io_b.deinit();
     const client_b = nats.Client.connect(
         allocator,
@@ -491,7 +491,7 @@ pub fn testHeadersManyEntries(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -586,7 +586,7 @@ pub fn testHeadersLargeValues(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -651,7 +651,7 @@ pub fn testHeadersSpecialChars(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -722,7 +722,7 @@ pub fn testHeadersBinaryPayload(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -786,7 +786,7 @@ pub fn testHeadersWellKnown(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -848,7 +848,7 @@ pub fn testHeadersCaseInsensitive(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(

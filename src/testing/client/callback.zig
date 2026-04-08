@@ -24,10 +24,7 @@ pub fn testCallbackMsgHandler(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -107,10 +104,7 @@ pub fn testCallbackPlainFn(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -186,10 +180,7 @@ pub fn testCallbackQueueGroup(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -278,10 +269,7 @@ pub fn testCallbackDeinitCleanup(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -327,10 +315,7 @@ pub fn testCallbackModeField(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -407,10 +392,7 @@ pub fn testCallbackHighVolume(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -506,10 +488,7 @@ pub fn testCallbackDataIntegrity(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -618,10 +597,7 @@ pub fn testCallbackMixedModes(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(
@@ -739,10 +715,7 @@ pub fn testCallbackRequestReply(
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(
-        allocator,
-        .{ .environ = .empty },
-    );
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const svc_client = nats.Client.connect(

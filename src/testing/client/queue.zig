@@ -14,7 +14,7 @@ pub fn testQueueGroups(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{ .reconnect = false }) catch {
@@ -42,7 +42,7 @@ pub fn testQueueGroupDistribution(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{ .reconnect = false }) catch {
@@ -131,7 +131,7 @@ pub fn testQueueGroupMultipleClients(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io_a: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io_a = utils.newIo(allocator);
     defer io_a.deinit();
     const client_a = nats.Client.connect(allocator, io_a.io(), url, .{ .reconnect = false }) catch {
         reportResult("queue_multi_client", false, "A connect failed");
@@ -139,7 +139,7 @@ pub fn testQueueGroupMultipleClients(allocator: std.mem.Allocator) void {
     };
     defer client_a.deinit();
 
-    var io_b: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io_b = utils.newIo(allocator);
     defer io_b.deinit();
     const client_b = nats.Client.connect(allocator, io_b.io(), url, .{ .reconnect = false }) catch {
         reportResult("queue_multi_client", false, "B connect failed");
@@ -147,7 +147,7 @@ pub fn testQueueGroupMultipleClients(allocator: std.mem.Allocator) void {
     };
     defer client_b.deinit();
 
-    var io_c: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io_c = utils.newIo(allocator);
     defer io_c.deinit();
     const client_c = nats.Client.connect(allocator, io_c.io(), url, .{ .reconnect = false }) catch {
         reportResult("queue_multi_client", false, "C connect failed");
@@ -215,7 +215,7 @@ pub fn testQueueGroupSingleReceiver(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{ .reconnect = false }) catch {
@@ -256,7 +256,7 @@ pub fn testQueueWithWildcard(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{ .reconnect = false }) catch {
@@ -297,7 +297,7 @@ pub fn testMultipleQueueGroups(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{ .reconnect = false }) catch {
@@ -346,11 +346,11 @@ pub fn testFourClientQueueGroup(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var ios: [5]std.Io.Threaded = undefined;
+    var ios: [5]*utils.TestIo = undefined;
     for (&ios) |*io_ptr| {
-        io_ptr.* = .init(allocator, .{ .environ = .empty });
+        io_ptr.* = utils.newIo(allocator);
     }
-    defer for (&ios) |*io_ptr| io_ptr.deinit();
+    defer for (ios) |io| io.deinit();
 
     var clients: [5]?*nats.Client = .{ null, null, null, null, null };
     defer for (&clients) |*c| {
@@ -416,7 +416,7 @@ pub fn testQueueMemberJoinsMidStream(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{ .reconnect = false }) catch {
@@ -482,7 +482,7 @@ pub fn testQueueMemberLeaves(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{ .reconnect = false }) catch {
@@ -536,7 +536,7 @@ pub fn testLargeQueueGroup(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{ .reconnect = false }) catch {
@@ -602,7 +602,7 @@ pub fn testQueueGroupNameValidation(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{ .reconnect = false }) catch {
@@ -640,7 +640,7 @@ pub fn testQueueGroupFairness(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    var io: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const io = utils.newIo(allocator);
     defer io.deinit();
 
     const client = nats.Client.connect(allocator, io.io(), url, .{ .reconnect = false }) catch {

@@ -26,7 +26,7 @@ pub fn testTlsConnection(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatTlsUrl(&url_buf, tls_port);
 
-    var threaded: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const threaded = utils.newIo(allocator);
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -67,7 +67,7 @@ pub fn testTlsInsecureSkipVerify(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatTlsUrl(&url_buf, tls_port);
 
-    var threaded: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const threaded = utils.newIo(allocator);
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -97,7 +97,7 @@ pub fn testTlsPubSub(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatTlsUrl(&url_buf, tls_port);
 
-    var threaded: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const threaded = utils.newIo(allocator);
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -149,7 +149,7 @@ pub fn testTlsReconnect(
     var url_buf: [64]u8 = undefined;
     const url = formatTlsUrl(&url_buf, tls_port);
 
-    var threaded: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const threaded = utils.newIo(allocator);
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -208,7 +208,7 @@ pub fn testTlsServerInfo(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatTlsUrl(&url_buf, tls_port);
 
-    var threaded: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const threaded = utils.newIo(allocator);
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -244,7 +244,7 @@ pub fn testTlsMultipleMessages(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatTlsUrl(&url_buf, tls_port);
 
-    var threaded: std.Io.Threaded = .init(allocator, .{ .environ = .empty });
+    const threaded = utils.newIo(allocator);
     defer threaded.deinit();
     const io = threaded.io();
 
