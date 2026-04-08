@@ -958,7 +958,7 @@ while (try watcher.next(5000)) |*update| {
 
 ### Not Yet Implemented
 
-Object store, push consumers, async publish.
+Object store, micro services
 
 ---
 
