@@ -200,6 +200,104 @@ pub const Message = struct {
     }
 };
 
+/// Per-request waiter for the response multiplexer.
+///
+/// Lives on the request()'s stack. The dispatcher fills `msg`
+/// with a cloned response Message and sets `done`; the request
+/// task spin-yields on `done` until the response arrives or the
+/// timeout fires.
+pub const RespWaiter = struct {
+    msg: ?Message = null,
+    done: std.atomic.Value(bool) =
+        std.atomic.Value(bool).init(false),
+};
+
+/// Lazy response multiplexer for request/reply.
+///
+/// Replaces per-request SUB/UNSUB churn with one wildcard inbox
+/// subscription per connection. The first request triggers
+/// ensureRespMux which subscribes to "_INBOX.<NUID>.*" and does a
+/// PING/PONG round-trip to confirm server registration; every
+/// subsequent request just registers a waiter in `map` and
+/// publishes. The dispatcher (handler on the wildcard sub) routes
+/// incoming replies by extracting the token suffix from the
+/// message subject and waking the matching waiter.
+///
+/// Owns its own mutex (NOT sub_mutex) so the demuxer cannot
+/// contend with subscribe/unsubscribe.
+pub const RespMux = struct {
+    /// Back-reference to the owning client. Set during the first
+    /// ensureRespMux call so the handler vtable can resolve back
+    /// to client.io and client.allocator.
+    client: ?*Client = null,
+
+    /// "_INBOX.<NUID>." with trailing dot. Allocated on first
+    /// request, freed by closeRespMux.
+    prefix: ?[]u8 = null,
+    prefix_len: usize = 0,
+
+    /// Wildcard subscription "_INBOX.<NUID>.*". Lives for the
+    /// connection lifetime; cleaned up by closeRespMux.
+    sub: ?*Subscription = null,
+
+    /// Active waiters keyed by the 8-char base62 token.
+    /// Token slices borrow from the requester's stack buffer.
+    map: std.StringHashMapUnmanaged(*RespWaiter) = .empty,
+
+    /// Monotonic counter for unique token generation. Atomic so
+    /// concurrent request() calls can mint tokens without locking.
+    next_token: std.atomic.Value(u64) =
+        std.atomic.Value(u64).init(0),
+
+    /// Dedicated mutex protecting `map`. Separate from sub_mutex
+    /// so the dispatcher cannot deadlock against subscribe paths.
+    mutex: Io.Mutex = .init,
+
+    /// Set true once prefix/sub are valid. Acquire-loaded on the
+    /// fast path of every request() to skip re-initialization.
+    initialized: std.atomic.Value(bool) =
+        std.atomic.Value(bool).init(false),
+
+    /// Handler hook called by the standard callback drain task
+    /// for every reply arriving on the wildcard subscription.
+    /// Extracts the token suffix from msg.subject, looks up the
+    /// matching waiter under `mutex`, clones the message into the
+    /// waiter, and signals `done`. Late deliveries (waiter already
+    /// removed by timeout) are silently dropped.
+    ///
+    /// IMPORTANT: clone+write happens INSIDE the lock so the
+    /// request() cleanup defer (which acquires the same mutex)
+    /// blocks until we are done writing to the waiter. This
+    /// prevents use-after-free on the stack-allocated waiter.
+    pub fn onMessage(
+        self: *RespMux,
+        msg: *const Message,
+    ) void {
+        const client = self.client orelse return;
+        assert(self.prefix_len > 0);
+        const subj = msg.subject;
+        if (subj.len <= self.prefix_len) return;
+        const token = subj[self.prefix_len..];
+
+        const io = client.io;
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
+
+        const entry = self.map.fetchRemove(token);
+        const waiter = if (entry) |e| e.value else return;
+
+        const cloned = cloneMessageContents(
+            client.allocator,
+            msg,
+        ) catch {
+            waiter.done.store(true, .release);
+            return;
+        };
+        waiter.msg = cloned;
+        waiter.done.store(true, .release);
+    }
+};
+
 /// Client connection options.
 ///
 /// All fields have sensible defaults. Common customizations:
@@ -553,6 +651,9 @@ statistics: Statistics = .{},
 publish_mutex: Io.Mutex = .init,
 /// Serializes multi-thread subscribe/unsubscribe bookkeeping.
 sub_mutex: Io.Mutex = .init,
+/// Lazy response multiplexer for request/reply.
+/// Owns its own mutex; does NOT share sub_mutex.
+resp_mux: RespMux = .{},
 /// Spinlock for multi-thread return_queue.push() in msg.deinit().
 /// Atomic spinlock (not Io.Mutex) because Message.deinit() has no io.
 return_lock: SpinLock = .{},
@@ -696,6 +797,7 @@ pub fn connect(
     client.tcp_nodelay_set = false;
     client.tcp_rcvbuf_set = false;
     client.flush_requested = std.atomic.Value(bool).init(false);
+    client.resp_mux = .{};
 
     // Initialize reconnection state
     client.server_pool = undefined;
@@ -1122,6 +1224,91 @@ fn callbackDrainFnPlain(
         };
         cb(&msg);
         msg.deinit();
+    }
+}
+
+/// Clones a Message into freshly allocated buffers owned by the
+/// caller. Used by RespMux.onMessage to transfer a borrowed reply
+/// (freed by the callback drain) into a Message the requester
+/// can keep beyond the handler return.
+fn cloneMessageContents(
+    allocator: Allocator,
+    src: *const Message,
+) !Message {
+    assert(src.subject.len > 0);
+
+    const subject = try allocator.dupe(u8, src.subject);
+    errdefer allocator.free(subject);
+
+    const data = try allocator.dupe(u8, src.data);
+    errdefer allocator.free(data);
+
+    const reply_to: ?[]const u8 = if (src.reply_to) |rt|
+        try allocator.dupe(u8, rt)
+    else
+        null;
+    errdefer if (reply_to) |rt| allocator.free(rt);
+
+    const hdrs: ?[]const u8 = if (src.headers) |h|
+        try allocator.dupe(u8, h)
+    else
+        null;
+
+    return .{
+        .subject = subject,
+        .sid = src.sid,
+        .reply_to = reply_to,
+        .data = data,
+        .headers = hdrs,
+        .allocator = allocator,
+        .owned = true,
+        .backing_buf = null,
+        .return_queue = null,
+        .return_lock = null,
+    };
+}
+
+/// Encodes a u64 into an 8-character base62 token in `buf`.
+/// Used by request() to generate unique reply suffixes from a
+/// monotonic counter without allocation or RNG state.
+fn generateRespToken(buf: *[8]u8, n: u64) []const u8 {
+    const digits =
+        "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ" ++
+        "abcdefghijklmnopqrstuvwxyz";
+    assert(digits.len == 62);
+    var x = n;
+    var i: usize = 8;
+    while (i > 0) {
+        i -= 1;
+        buf[i] = digits[@intCast(x % 62)];
+        x /= 62;
+    }
+    return buf[0..];
+}
+
+/// Spin-yield wait for a RespWaiter to be signaled.
+/// Spawned via io.async and raced against a timeout in request().
+/// Mirrors the Sub.nextRaw spin/yield discipline so it cooperates
+/// with both std.Io.Threaded and std.Io.Evented.
+fn waitForRespWaiter(
+    waiter: *RespWaiter,
+    io: Io,
+) !void {
+    var spin: u32 = 0;
+    while (!waiter.done.load(.acquire)) {
+        spin += 1;
+        if (spin < defaults.Spin.max_spins) {
+            std.atomic.spinLoopHint();
+        } else {
+            io.sleep(
+                .fromNanoseconds(0),
+                .awake,
+            ) catch |err| {
+                if (err == error.Canceled)
+                    return error.Canceled;
+            };
+            spin = 0;
+        }
     }
 }
 
@@ -1937,71 +2124,25 @@ pub fn requestWithHeaders(
     payload: []const u8,
     timeout_ms: u32,
 ) !?Message {
-    const allocator = self.allocator;
     assert(timeout_ms > 0);
+    assert(subject.len > 0);
     if (!State.atomicLoad(&self.state).canSend()) {
         return error.NotConnected;
     }
 
-    // Generate unique inbox for reply (uses configured inbox_prefix)
-    const inbox = try self.newInbox();
-    defer allocator.free(inbox);
+    var waiter: RespWaiter = .{};
+    var reply_buf: [256]u8 = undefined;
+    const reply = try self.requestPrepReply(&waiter, &reply_buf);
+    errdefer self.cleanupRespWaiter(&waiter, reply);
 
-    // Subscribe to inbox (temporary subscription)
-    const sub = try self.subscribeSync(inbox);
-    defer sub.deinit();
+    try self.publishRequestWithHeaders(
+        subject,
+        reply,
+        hdrs,
+        payload,
+    );
 
-    // Brief delay to ensure server has registered subscription
-    // (auto-flush sends SUB within ~1ms, sleep gives server processing time)
-    self.io.sleep(.fromMilliseconds(5), .awake) catch {};
-
-    // Publish request with reply-to and headers (auto-flush sends promptly)
-    try self.publishRequestWithHeaders(subject, inbox, hdrs, payload);
-
-    const Sel = Io.Select(union(enum) {
-        response: anyerror!Message,
-        timeout: void,
-    });
-    var buf: [2]Sel.Union = undefined;
-    var sel = Sel.init(self.io, &buf);
-    sel.async(.response, Subscription.nextMsg, .{sub});
-    sel.async(.timeout, sleepMs, .{ self.io, timeout_ms });
-
-    const select_result = sel.await() catch {
-        while (sel.cancel()) |remaining| {
-            switch (remaining) {
-                .response => |r| {
-                    if (r) |msg| msg.deinit() else |_| {}
-                },
-                .timeout => {},
-            }
-        }
-        return null;
-    };
-    while (sel.cancel()) |remaining| {
-        switch (remaining) {
-            .response => |r| {
-                if (r) |msg| msg.deinit() else |_| {}
-            },
-            .timeout => {},
-        }
-    }
-
-    switch (select_result) {
-        .response => |msg_result| {
-            return msg_result catch |err| {
-                if (err == error.Canceled or
-                    err == error.Closed)
-                {
-                    return null;
-                }
-                return err;
-            };
-        },
-        .timeout => {
-            return null;
-        },
-    }
+    return self.requestAwaitResp(&waiter, reply, timeout_ms);
 }
 
 /// Flushes pending writes to the server.
@@ -2180,6 +2321,213 @@ fn drainHelper(self: *Client) !DrainResult {
     return self.drain();
 }
 
+/// Lazily initializes the response multiplexer on the first
+/// request() call. Subsequent calls fast-path on the atomic
+/// `initialized` flag.
+///
+/// Init steps (run once per connection lifetime):
+///   1. Build the inbox prefix and wildcard subject
+///   2. subscribe(wildcard, RespMux as handler)
+///   3. flush() - PING/PONG round-trip confirms server has the SUB
+///   4. Publish init under resp_mux.mutex with double-checked
+///      pattern (concurrent first-requesters race; loser cleans up)
+///
+/// Lock discipline: resp_mux.mutex is NOT held across the slow
+/// flush() call. Holding it would risk deadlock if the io_task
+/// were spinning trying to call respMux.onMessage while flush()
+/// spin-waits on the PONG atomic. The window is safe because the
+/// wildcard "_INBOX.<NUID>.*" is unique to this connection and no
+/// peer can publish to it before the first request.
+fn ensureRespMux(self: *Client) !void {
+    if (self.resp_mux.initialized.load(.acquire)) return;
+    if (!State.atomicLoad(&self.state).canSend()) {
+        return error.NotConnected;
+    }
+
+    const allocator = self.allocator;
+    const base = try self.newInbox();
+    defer allocator.free(base);
+    assert(base.len > 0);
+
+    const prefix = try std.fmt.allocPrint(
+        allocator,
+        "{s}.",
+        .{base},
+    );
+    errdefer allocator.free(prefix);
+
+    // wildcard = "<base>.*" — the trailing dot is in prefix already.
+    var wildcard_buf: [256]u8 = undefined;
+    const wildcard = std.fmt.bufPrint(
+        &wildcard_buf,
+        "{s}*",
+        .{prefix},
+    ) catch return error.SubjectTooLong;
+
+    self.resp_mux.client = self;
+
+    const sub = try self.subscribe(
+        wildcard,
+        MsgHandler.init(RespMux, &self.resp_mux),
+    );
+    errdefer sub.deinit();
+
+    try self.flush(5 * std.time.ns_per_s);
+
+    self.resp_mux.mutex.lockUncancelable(self.io);
+    defer self.resp_mux.mutex.unlock(self.io);
+
+    if (self.resp_mux.initialized.load(.acquire)) {
+        sub.deinit();
+        allocator.free(prefix);
+        return;
+    }
+
+    self.resp_mux.prefix = prefix;
+    self.resp_mux.prefix_len = prefix.len;
+    self.resp_mux.sub = sub;
+    self.resp_mux.initialized.store(true, .release);
+}
+
+/// Inner helper: registers a stack-allocated waiter in the resp
+/// map and returns the assembled reply subject. The caller MUST
+/// invoke requestAwaitResp (or manually clean up the map) before
+/// the waiter goes out of scope.
+///
+/// Note: the map key is a slice of reply_buf (the caller's stack
+/// buffer). The cleanup defer in requestAwaitResp removes the
+/// entry before the caller's frame is unwound.
+fn requestPrepReply(
+    self: *Client,
+    waiter: *RespWaiter,
+    reply_buf: *[256]u8,
+) ![]const u8 {
+    try self.ensureRespMux();
+    assert(self.resp_mux.prefix != null);
+    assert(self.resp_mux.prefix_len > 0);
+
+    var token_buf: [8]u8 = undefined;
+    const token = generateRespToken(
+        &token_buf,
+        self.resp_mux.next_token.fetchAdd(1, .monotonic),
+    );
+
+    const reply = std.fmt.bufPrint(
+        reply_buf,
+        "{s}{s}",
+        .{ self.resp_mux.prefix.?, token },
+    ) catch return error.SubjectTooLong;
+
+    // Register using a slice of `reply` (lives in caller's frame).
+    // This must outlive the map entry — caller's deferred cleanup
+    // in requestAwaitResp removes the entry before reply_buf dies.
+    const map_key = reply[self.resp_mux.prefix_len..];
+
+    self.resp_mux.mutex.lockUncancelable(self.io);
+    self.resp_mux.map.put(
+        self.allocator,
+        map_key,
+        waiter,
+    ) catch {
+        self.resp_mux.mutex.unlock(self.io);
+        return error.OutOfMemory;
+    };
+    self.resp_mux.mutex.unlock(self.io);
+
+    return reply;
+}
+
+/// Removes a waiter from the resp map. Used as an error-path
+/// cleanup helper when publish fails after the waiter is
+/// registered but before requestAwaitResp would run. If the
+/// dispatcher already removed it (and possibly populated msg),
+/// the returned message is freed by the caller via the same
+/// path requestAwaitResp would use.
+fn cleanupRespWaiter(
+    self: *Client,
+    waiter: *RespWaiter,
+    reply: []const u8,
+) void {
+    assert(self.resp_mux.prefix_len > 0);
+    const map_key = reply[self.resp_mux.prefix_len..];
+    self.resp_mux.mutex.lockUncancelable(self.io);
+    _ = self.resp_mux.map.remove(map_key);
+    self.resp_mux.mutex.unlock(self.io);
+    if (waiter.msg) |m| {
+        m.deinit();
+        waiter.msg = null;
+    }
+}
+
+/// Inner helper: races the waiter against a timeout, cleans up
+/// the map entry on every exit path, and returns the response or
+/// null. Acquiring resp_mux.mutex in the cleanup defer serializes
+/// against any concurrent dispatcher (which holds the same mutex
+/// during clone+write), preventing use-after-free of the
+/// stack-allocated waiter.
+fn requestAwaitResp(
+    self: *Client,
+    waiter: *RespWaiter,
+    reply: []const u8,
+    timeout_ms: u32,
+) ?Message {
+    assert(self.resp_mux.prefix_len > 0);
+    const map_key = reply[self.resp_mux.prefix_len..];
+
+    defer {
+        self.resp_mux.mutex.lockUncancelable(self.io);
+        _ = self.resp_mux.map.remove(map_key);
+        self.resp_mux.mutex.unlock(self.io);
+    }
+
+    const Sel = Io.Select(union(enum) {
+        response: anyerror!void,
+        timeout: void,
+    });
+    var sel_buf: [2]Sel.Union = undefined;
+    var sel = Sel.init(self.io, &sel_buf);
+    sel.async(
+        .response,
+        waitForRespWaiter,
+        .{ waiter, self.io },
+    );
+    sel.async(.timeout, sleepMs, .{ self.io, timeout_ms });
+
+    _ = sel.await() catch {
+        sel.cancelDiscard();
+        return waiter.msg;
+    };
+    sel.cancelDiscard();
+    return waiter.msg;
+}
+
+/// Cleans up the response multiplexer. Called from Client.deinit
+/// before subscriptions are torn down. Signals all in-flight
+/// waiters with null msg so any blocked request() calls unblock
+/// and return null cleanly.
+fn closeRespMux(self: *Client) void {
+    const io = self.io;
+    self.resp_mux.mutex.lockUncancelable(io);
+    var it = self.resp_mux.map.iterator();
+    while (it.next()) |entry| {
+        entry.value_ptr.*.done.store(true, .release);
+    }
+    self.resp_mux.map.clearAndFree(self.allocator);
+    self.resp_mux.mutex.unlock(io);
+
+    if (self.resp_mux.sub) |sub| {
+        sub.deinit();
+        self.resp_mux.sub = null;
+    }
+    if (self.resp_mux.prefix) |p| {
+        self.allocator.free(p);
+        self.resp_mux.prefix = null;
+        self.resp_mux.prefix_len = 0;
+    }
+    self.resp_mux.initialized.store(false, .release);
+    self.resp_mux.client = null;
+}
+
 /// Sends a request and waits for a reply with timeout.
 ///
 /// Arguments:
@@ -2187,79 +2535,33 @@ fn drainHelper(self: *Client) !DrainResult {
 ///     payload: Request data
 ///     timeout_ms: Maximum time to wait for reply in milliseconds
 ///
-/// Creates a temporary inbox subscription, sends request with reply-to,
-/// and waits for response using Io.Select. Returns null on timeout.
+/// Uses the response multiplexer: a single wildcard inbox
+/// subscription is created on first call (with PING/PONG sync)
+/// and reused for the connection lifetime. Each call registers
+/// a stack-allocated waiter in the resp_map keyed by an 8-char
+/// token, publishes the request with reply-to set to the
+/// per-request inbox, and races the response against the timeout.
+/// Returns null on timeout, cancellation, or no-responders.
 pub fn request(
     self: *Client,
     subject: []const u8,
     payload: []const u8,
     timeout_ms: u32,
 ) !?Message {
-    const allocator = self.allocator;
     assert(timeout_ms > 0);
+    assert(subject.len > 0);
     if (!State.atomicLoad(&self.state).canSend()) {
         return error.NotConnected;
     }
 
-    // Generate unique inbox for reply (uses configured inbox_prefix)
-    const inbox = try self.newInbox();
-    defer allocator.free(inbox);
+    var waiter: RespWaiter = .{};
+    var reply_buf: [256]u8 = undefined;
+    const reply = try self.requestPrepReply(&waiter, &reply_buf);
+    errdefer self.cleanupRespWaiter(&waiter, reply);
 
-    // Subscribe to inbox (temporary subscription)
-    const sub = try self.subscribeSync(inbox);
-    defer sub.deinit();
+    try self.publishRequest(subject, reply, payload);
 
-    // Brief delay to ensure server has registered subscription
-    // (auto-flush sends SUB within ~1ms, sleep gives server processing time)
-    self.io.sleep(.fromMilliseconds(5), .awake) catch {};
-
-    // Publish request with reply-to (auto-flush sends promptly)
-    try self.publishRequest(subject, inbox, payload);
-
-    const Sel = Io.Select(union(enum) {
-        response: anyerror!Message,
-        timeout: void,
-    });
-    var buf: [2]Sel.Union = undefined;
-    var sel = Sel.init(self.io, &buf);
-    sel.async(.response, Subscription.nextMsg, .{sub});
-    sel.async(.timeout, sleepMs, .{ self.io, timeout_ms });
-
-    const select_result = sel.await() catch {
-        while (sel.cancel()) |remaining| {
-            switch (remaining) {
-                .response => |r| {
-                    if (r) |m| m.deinit() else |_| {}
-                },
-                .timeout => {},
-            }
-        }
-        return null;
-    };
-    while (sel.cancel()) |remaining| {
-        switch (remaining) {
-            .response => |r| {
-                if (r) |m| m.deinit() else |_| {}
-            },
-            .timeout => {},
-        }
-    }
-
-    switch (select_result) {
-        .response => |msg_result| {
-            return msg_result catch |err| {
-                if (err == error.Canceled or
-                    err == error.Closed)
-                {
-                    return null;
-                }
-                return err;
-            };
-        },
-        .timeout => {
-            return null;
-        },
-    }
+    return self.requestAwaitResp(&waiter, reply, timeout_ms);
 }
 
 /// Sends a request using a Message object and waits for a reply.
@@ -2268,32 +2570,27 @@ pub fn request(
 ///     msg: Message to send (uses subject, data, and headers if present)
 ///     timeout_ms: Maximum time to wait for reply in milliseconds
 ///
-/// Useful for forwarding request messages or republishing with same content.
-/// Creates a temporary inbox subscription, sends request with reply-to,
-/// and waits for response. Returns null on timeout.
+/// Useful for forwarding request messages or republishing with same
+/// content. Routes through the response multiplexer (see request()).
+/// The msg.headers field carries pre-encoded raw header bytes; this
+/// preserves them verbatim across the request/reply round-trip.
 pub fn requestMsg(
     self: *Client,
     msg: *const Message,
     timeout_ms: u32,
 ) !?Message {
-    const allocator = self.allocator;
     assert(msg.subject.len > 0);
     assert(timeout_ms > 0);
-    if (!State.atomicLoad(&self.state).canSend()) return error.NotConnected;
+    if (!State.atomicLoad(&self.state).canSend()) {
+        return error.NotConnected;
+    }
 
-    // Generate unique inbox for reply
-    const inbox = try self.newInbox();
-    defer allocator.free(inbox);
+    var waiter: RespWaiter = .{};
+    var reply_buf: [256]u8 = undefined;
+    const reply = try self.requestPrepReply(&waiter, &reply_buf);
+    errdefer self.cleanupRespWaiter(&waiter, reply);
 
-    // Subscribe to inbox (temporary subscription)
-    const sub = try self.subscribeSync(inbox);
-    defer sub.deinit();
-
-    // Brief delay to ensure server has registered subscription
-    // (auto-flush sends SUB within ~1ms, sleep gives server processing time)
-    self.io.sleep(.fromMilliseconds(5), .awake) catch {};
-
-    // Publish request with reply-to (with or without headers)
+    // Inline encode (raw header bytes path - no helper for this).
     try self.write_mutex.lock(self.io);
     {
         defer self.write_mutex.unlock(self.io);
@@ -2302,14 +2599,14 @@ pub fn requestMsg(
         if (msg.headers) |hdrs| {
             protocol.Encoder.encodeHPub(writer, .{
                 .subject = msg.subject,
-                .reply_to = inbox,
+                .reply_to = reply,
                 .headers = hdrs,
                 .payload = msg.data,
             }) catch return error.EncodingFailed;
         } else {
             protocol.Encoder.encodePub(writer, .{
                 .subject = msg.subject,
-                .reply_to = inbox,
+                .reply_to = reply,
                 .payload = msg.data,
             }) catch return error.EncodingFailed;
         }
@@ -2320,55 +2617,10 @@ pub fn requestMsg(
             .monotonic,
         );
 
-        // Signal auto-flush to send request promptly
         self.flush_requested.store(true, .release);
     }
 
-    const Sel = Io.Select(union(enum) {
-        response: anyerror!Message,
-        timeout: void,
-    });
-    var buf_sel: [2]Sel.Union = undefined;
-    var sel = Sel.init(self.io, &buf_sel);
-    sel.async(
-        .response,
-        Subscription.nextMsg,
-        .{sub},
-    );
-    sel.async(.timeout, sleepMs, .{ self.io, timeout_ms });
-
-    const select_result = sel.await() catch {
-        while (sel.cancel()) |remaining| {
-            switch (remaining) {
-                .response => |r| {
-                    if (r) |m| m.deinit() else |_| {}
-                },
-                .timeout => {},
-            }
-        }
-        return null;
-    };
-    while (sel.cancel()) |remaining| {
-        switch (remaining) {
-            .response => |r| {
-                if (r) |m| m.deinit() else |_| {}
-            },
-            .timeout => {},
-        }
-    }
-
-    switch (select_result) {
-        .response => |msg_result| {
-            return msg_result catch |err| {
-                if (err == error.Canceled or
-                    err == error.Closed) return null;
-                return err;
-            };
-        },
-        .timeout => {
-            return null;
-        },
-    }
+    return self.requestAwaitResp(&waiter, reply, timeout_ms);
 }
 
 /// Sleep helper for timeouts (milliseconds).
@@ -3152,6 +3404,12 @@ pub fn deinit(self: *Client) void {
         alloc.free(buf);
         self.event_queue_buf = null;
     }
+
+    // 5b. Tear down the response multiplexer.
+    // Owns a wildcard subscription that we destroy here so the
+    // step-6 sub_ptrs loop sees a cleared slot. Signals all
+    // in-flight waiters so blocked request() calls return null.
+    self.closeRespMux();
 
     // 6. Cleanup subscriptions (io_task is now gone)
     self.closeAllQueues();

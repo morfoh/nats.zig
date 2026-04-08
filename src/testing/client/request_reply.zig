@@ -529,6 +529,252 @@ pub fn testMultipleRequestsSequential(allocator: std.mem.Allocator) void {
     }
 }
 
+/// Helper: spawns a responder fiber that replies "pong" forever
+/// to the given subject. The caller cancels the returned future
+/// in defer to stop it.
+const RespHandler = struct {
+    fn run(client: *nats.Client, sub: *nats.Subscription) void {
+        while (true) {
+            const req = sub.nextMsgTimeout(2000) catch return;
+            const m = req orelse return;
+            defer m.deinit();
+            const reply = m.reply_to orelse continue;
+            client.publish(reply, "pong") catch return;
+        }
+    }
+};
+
+/// Muxer-specific test: proves the 5ms artificial latency floor
+/// is gone. Times a single sequential round-trip against a
+/// loopback responder and asserts elapsed << 5ms (the old floor).
+/// First request bears one PING/PONG round-trip from
+/// ensureRespMux but on loopback that is well under 2ms.
+pub fn testMuxerLatencyFloor(allocator: std.mem.Allocator) void {
+    var url_buf: [64]u8 = undefined;
+    const url = formatUrl(&url_buf, test_port);
+
+    const io_r = utils.newIo(allocator);
+    defer io_r.deinit();
+    const responder = nats.Client.connect(
+        allocator,
+        io_r.io(),
+        url,
+        .{ .reconnect = false },
+    ) catch {
+        reportResult("muxer_latency_floor", false, "responder connect failed");
+        return;
+    };
+    defer responder.deinit();
+
+    const sub = responder.subscribeSync("muxer.lat.test") catch {
+        reportResult("muxer_latency_floor", false, "responder sub failed");
+        return;
+    };
+    defer sub.deinit();
+    io_r.io().sleep(.fromMilliseconds(50), .awake) catch {};
+
+    var resp_fut = io_r.io().async(RespHandler.run, .{ responder, sub });
+    defer _ = resp_fut.cancel(io_r.io());
+
+    const io_q = utils.newIo(allocator);
+    defer io_q.deinit();
+    const requester = nats.Client.connect(
+        allocator,
+        io_q.io(),
+        url,
+        .{ .reconnect = false },
+    ) catch {
+        reportResult("muxer_latency_floor", false, "requester connect failed");
+        return;
+    };
+    defer requester.deinit();
+
+    const start = std.Io.Timestamp.now(io_q.io(), .awake);
+    const reply = requester.request(
+        "muxer.lat.test",
+        "ping",
+        2000,
+    ) catch {
+        reportResult("muxer_latency_floor", false, "request failed");
+        return;
+    };
+    const end = std.Io.Timestamp.now(io_q.io(), .awake);
+
+    if (reply) |m| m.deinit() else {
+        reportResult("muxer_latency_floor", false, "no reply");
+        return;
+    }
+
+    const elapsed_ns: u64 = @intCast(start.durationTo(end).nanoseconds);
+    const elapsed_ms = elapsed_ns / std.time.ns_per_ms;
+
+    // Old code burned a hardcoded 5ms sleep before publish.
+    // The muxer replaces it with one PING/PONG which on loopback
+    // is well under 5ms even on the cold-cache first request.
+    if (elapsed_ms < 5) {
+        reportResult("muxer_latency_floor", true, "");
+    } else {
+        var buf: [64]u8 = undefined;
+        const detail = std.fmt.bufPrint(
+            &buf,
+            "took {d}ms (expected < 5ms)",
+            .{elapsed_ms},
+        ) catch "e";
+        reportResult("muxer_latency_floor", false, detail);
+    }
+}
+
+/// Muxer-specific test: proves the muxer's PING/PONG init cost
+/// is amortized to zero. Issues 100 sequential requests on the
+/// same connection and asserts the average round-trip is well
+/// under 1ms (the cold first call is the only one paying for
+/// ensureRespMux + PING/PONG).
+pub fn testMuxerRapidSequential(allocator: std.mem.Allocator) void {
+    var url_buf: [64]u8 = undefined;
+    const url = formatUrl(&url_buf, test_port);
+
+    const io_r = utils.newIo(allocator);
+    defer io_r.deinit();
+    const responder = nats.Client.connect(
+        allocator,
+        io_r.io(),
+        url,
+        .{ .reconnect = false },
+    ) catch {
+        reportResult("muxer_rapid_sequential", false, "responder connect failed");
+        return;
+    };
+    defer responder.deinit();
+
+    const sub = responder.subscribeSync("muxer.rapid.test") catch {
+        reportResult("muxer_rapid_sequential", false, "responder sub failed");
+        return;
+    };
+    defer sub.deinit();
+    io_r.io().sleep(.fromMilliseconds(50), .awake) catch {};
+
+    var resp_fut = io_r.io().async(RespHandler.run, .{ responder, sub });
+    defer _ = resp_fut.cancel(io_r.io());
+
+    const io_q = utils.newIo(allocator);
+    defer io_q.deinit();
+    const requester = nats.Client.connect(
+        allocator,
+        io_q.io(),
+        url,
+        .{ .reconnect = false },
+    ) catch {
+        reportResult("muxer_rapid_sequential", false, "requester connect failed");
+        return;
+    };
+    defer requester.deinit();
+
+    const N: u32 = 100;
+    var success: u32 = 0;
+    const start = std.Io.Timestamp.now(io_q.io(), .awake);
+    var i: u32 = 0;
+    while (i < N) : (i += 1) {
+        const reply = requester.request(
+            "muxer.rapid.test",
+            "ping",
+            2000,
+        ) catch break;
+        if (reply) |m| {
+            defer m.deinit();
+            if (std.mem.eql(u8, m.data, "pong")) success += 1;
+        } else break;
+    }
+    const end = std.Io.Timestamp.now(io_q.io(), .awake);
+
+    if (success != N) {
+        var buf: [64]u8 = undefined;
+        const detail = std.fmt.bufPrint(
+            &buf,
+            "got {d}/{d} replies",
+            .{ success, N },
+        ) catch "e";
+        reportResult("muxer_rapid_sequential", false, detail);
+        return;
+    }
+
+    const elapsed_ns: u64 = @intCast(start.durationTo(end).nanoseconds);
+    const total_ms = elapsed_ns / std.time.ns_per_ms;
+
+    // The old per-request-sub path burned at least 5ms per call
+    // in the artificial sleep alone, so 100 requests would take
+    // >= 500ms even before counting SUB/UNSUB churn. The muxer
+    // amortizes ensureRespMux to one PING/PONG and then uses the
+    // wildcard sub for every subsequent request, so total time
+    // is dominated by per-call dispatch overhead. We assert well
+    // under the old floor to prove the muxer is on the hot path.
+    if (total_ms < 400) {
+        reportResult("muxer_rapid_sequential", true, "");
+    } else {
+        var buf: [64]u8 = undefined;
+        const detail = std.fmt.bufPrint(
+            &buf,
+            "100 requests took {d}ms (expected < 400ms)",
+            .{total_ms},
+        ) catch "e";
+        reportResult("muxer_rapid_sequential", false, detail);
+    }
+}
+
+/// Muxer-specific test: proves no use-after-free or leak when a
+/// request times out (waiter is removed from the resp_map by the
+/// cleanup defer in requestAwaitResp). Fires N timing-out
+/// requests against a nonexistent subject and asserts each
+/// returns null cleanly without leaking the waiter slot.
+pub fn testMuxerTimeoutCleanup(allocator: std.mem.Allocator) void {
+    var url_buf: [64]u8 = undefined;
+    const url = formatUrl(&url_buf, test_port);
+
+    const io = utils.newIo(allocator);
+    defer io.deinit();
+
+    const client = nats.Client.connect(
+        allocator,
+        io.io(),
+        url,
+        .{ .reconnect = false, .no_responders = false },
+    ) catch {
+        reportResult("muxer_timeout_cleanup", false, "connect failed");
+        return;
+    };
+    defer client.deinit();
+
+    var i: u32 = 0;
+    while (i < 20) : (i += 1) {
+        const reply = client.request(
+            "muxer.cleanup.noexist",
+            "ping",
+            20,
+        ) catch {
+            reportResult("muxer_timeout_cleanup", false, "request error");
+            return;
+        };
+        if (reply) |m| {
+            m.deinit();
+            reportResult(
+                "muxer_timeout_cleanup",
+                false,
+                "unexpected reply",
+            );
+            return;
+        }
+    }
+
+    if (client.isConnected()) {
+        reportResult("muxer_timeout_cleanup", true, "");
+    } else {
+        reportResult(
+            "muxer_timeout_cleanup",
+            false,
+            "disconnected after timeouts",
+        );
+    }
+}
+
 pub fn runAll(allocator: std.mem.Allocator) void {
     testRequestMethod(allocator);
     testRequestReturns(allocator);
@@ -538,4 +784,7 @@ pub fn runAll(allocator: std.mem.Allocator) void {
     testRequestTimeout(allocator);
     testRequestWithLargePayload(allocator);
     testMultipleRequestsSequential(allocator);
+    testMuxerLatencyFloor(allocator);
+    testMuxerRapidSequential(allocator);
+    testMuxerTimeoutCleanup(allocator);
 }

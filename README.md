@@ -627,6 +627,33 @@ if (reply) |msg| {
 }
 ```
 
+### Implementation Note: Response Multiplexer
+
+`request()`, `requestMsg()`, and `requestWithHeaders()` use a shared
+*response multiplexer* internally — the same pattern as the Go
+client's `respMux`. The first call lazily subscribes once to a
+wildcard inbox `_INBOX.<connNUID>.*` and does a PING/PONG round-trip
+to confirm server registration. Every subsequent call reuses that
+single subscription and just registers a per-request waiter in a
+token-keyed map. The dispatcher routes incoming replies back to the
+matching waiter.
+
+Benefits over the naive per-request subscription approach:
+
+- **No SUB/UNSUB protocol churn** — the server (and any clustered
+  gateways/leaf nodes) sees one wildcard subscription per connection
+  instead of one SUB+UNSUB pair per request.
+- **No per-request allocations** for the subscription struct, queue
+  buffer, or owned subject string.
+- **No latency floor** — the old implementation burned a hardcoded
+  5ms sleep on every request to give the server time to process the
+  per-request SUB. The muxer pays one PING/PONG round-trip *once* on
+  the first request and amortizes it to zero across subsequent calls.
+- **Better concurrent throughput** — relevant for JetStream and KV
+  workloads, which are RPC-heavy internally.
+
+The user-facing API is unchanged.
+
 ---
 
 ## Headers
