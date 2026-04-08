@@ -17,7 +17,7 @@ Built on `std.Io`.
 > **Work in Progress** - This library is under active development.
 > Core pub/sub, TLS, JetStream (pull + push consumers), and
 > Key-Value store are implemented and functional. Object store
-> and async publish are planned. The API may change.
+> and micro services are planned. The API may change.
 
 ## Requirements
 
