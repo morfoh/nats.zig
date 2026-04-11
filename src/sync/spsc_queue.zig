@@ -42,6 +42,7 @@ pub fn SpscQueue(comptime T: type) type {
         capacity: usize,
         head: std.atomic.Value(usize),
         tail: std.atomic.Value(usize),
+        closed: std.atomic.Value(bool),
 
         const Self = @This();
 
@@ -55,12 +56,14 @@ pub fn SpscQueue(comptime T: type) type {
                 .capacity = buffer.len,
                 .head = std.atomic.Value(usize).init(0),
                 .tail = std.atomic.Value(usize).init(0),
+                .closed = std.atomic.Value(bool).init(false),
             };
         }
 
         /// Push item (producer only). Returns false if full.
         /// O(1), lock-free, never blocks.
         pub fn push(self: *Self, item: T) bool {
+            if (self.closed.load(.acquire)) return false;
             // .monotonic: single head writer, no sync needed for own read
             const head = self.head.load(.monotonic);
             // .acquire: must see consumer's tail updates to know slots are free
@@ -129,10 +132,15 @@ pub fn SpscQueue(comptime T: type) type {
             return self.len() == 0;
         }
 
-        /// Close queue (no-op for compatibility with Io.Queue API).
+        /// Returns true once the queue has been closed.
+        pub fn isClosed(self: *const Self) bool {
+            return self.closed.load(.acquire);
+        }
+
+        /// Close queue and wake receivers polling for shutdown.
         pub fn close(self: *Self, io: anytype) void {
-            _ = self;
             _ = io;
+            self.closed.store(true, .release);
         }
     };
 }

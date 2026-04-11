@@ -15,6 +15,10 @@ const auth_port = utils.auth_port;
 const test_token = utils.test_token;
 const ServerManager = utils.ServerManager;
 
+fn sleepMs(io: std.Io, ms: i64) void {
+    io.sleep(.fromMilliseconds(ms), .awake) catch {};
+}
+
 pub fn testConcurrentSubscribe(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
@@ -637,6 +641,147 @@ pub fn testStatsConcurrency(allocator: std.mem.Allocator) void {
     reportResult("stats_concurrency", true, "");
 }
 
+pub fn testMixedWriteOrderingPublishBeforeSubscribe(
+    allocator: std.mem.Allocator,
+) void {
+    var url_buf: [64]u8 = undefined;
+    const url = formatUrl(&url_buf, test_port);
+
+    const io = utils.newIo(allocator);
+    defer io.deinit();
+
+    const client = nats.Client.connect(
+        allocator,
+        io.io(),
+        url,
+        .{ .reconnect = false },
+    ) catch {
+        reportResult("mixed_write_ordering", false, "connect failed");
+        return;
+    };
+    defer client.deinit();
+
+    const iterations = 100;
+    for (0..iterations) |i| {
+        {
+            var subject_buf: [48]u8 = undefined;
+            const subject = std.fmt.bufPrint(
+                &subject_buf,
+                "ordering.publish.before.sub.{d}",
+                .{i},
+            ) catch {
+                reportResult("mixed_write_ordering", false, "subject format failed");
+                return;
+            };
+
+            client.publish(subject, "queued-before-sub") catch {
+                reportResult("mixed_write_ordering", false, "publish failed");
+                return;
+            };
+
+            const sub = client.subscribeSync(subject) catch {
+                reportResult("mixed_write_ordering", false, "subscribe failed");
+                return;
+            };
+            defer sub.deinit();
+
+            client.flush(1_000_000_000) catch {
+                reportResult("mixed_write_ordering", false, "flush failed");
+                return;
+            };
+
+            if (sub.nextMsgTimeout(50) catch null) |msg| {
+                msg.deinit();
+                var detail_buf: [64]u8 = undefined;
+                const detail = std.fmt.bufPrint(
+                    &detail_buf,
+                    "pre-sub publish delivered at iter {d}",
+                    .{i},
+                ) catch "unexpected pre-sub delivery";
+                reportResult("mixed_write_ordering", false, detail);
+                return;
+            }
+        }
+    }
+
+    reportResult("mixed_write_ordering", true, "");
+}
+
+fn delayedUnsubscribe(
+    io: std.Io,
+    sub: *nats.Subscription,
+    delay_ms: i64,
+) void {
+    sleepMs(io, delay_ms);
+    sub.unsubscribe() catch {};
+}
+
+pub fn testBlockingNextMsgUnsubscribeWakeup(
+    allocator: std.mem.Allocator,
+) void {
+    var url_buf: [64]u8 = undefined;
+    const url = formatUrl(&url_buf, test_port);
+
+    const io_wrap = utils.newIo(allocator);
+    defer io_wrap.deinit();
+    const io = io_wrap.io();
+
+    const client = nats.Client.connect(
+        allocator,
+        io,
+        url,
+        .{ .reconnect = false },
+    ) catch {
+        reportResult("blocking_nextmsg_unsub", false, "connect failed");
+        return;
+    };
+    defer client.deinit();
+
+    const sub = client.subscribeSync("blocking.nextmsg.unsub") catch {
+        reportResult("blocking_nextmsg_unsub", false, "subscribe failed");
+        return;
+    };
+    defer sub.deinit();
+
+    var wake_thread = io.async(delayedUnsubscribe, .{ io, sub, 20 });
+    defer _ = wake_thread.cancel(io);
+
+    const Sel = std.Io.Select(union(enum) {
+        recv: anyerror!nats.Client.Message,
+        timeout: void,
+    });
+    var buf: [2]Sel.Union = undefined;
+    var sel = Sel.init(io, &buf);
+    sel.async(.recv, nats.Client.Sub.nextMsg, .{sub});
+    sel.async(.timeout, sleepMs, .{ io, 200 });
+
+    const result = sel.await() catch {
+        sel.cancelDiscard();
+        reportResult("blocking_nextmsg_unsub", false, "select canceled");
+        return;
+    };
+    sel.cancelDiscard();
+
+    switch (result) {
+        .recv => |recv_result| {
+            if (recv_result) |msg| {
+                msg.deinit();
+                reportResult("blocking_nextmsg_unsub", false, "unexpected message");
+            } else |err| switch (err) {
+                error.Closed, error.Canceled => {
+                    reportResult("blocking_nextmsg_unsub", true, "");
+                },
+                else => {
+                    reportResult("blocking_nextmsg_unsub", false, @errorName(err));
+                },
+            }
+        },
+        .timeout => {
+            reportResult("blocking_nextmsg_unsub", false, "nextMsg did not wake");
+        },
+    }
+}
+
 pub fn runAll(allocator: std.mem.Allocator) void {
     testConcurrentSubscribe(allocator);
     testRapidPublish(allocator);
@@ -648,4 +793,6 @@ pub fn runAll(allocator: std.mem.Allocator) void {
     testParallelReceive(allocator);
     testRapidFlushOperations(allocator);
     testStatsConcurrency(allocator);
+    testMixedWriteOrderingPublishBeforeSubscribe(allocator);
+    testBlockingNextMsgUnsubscribeWakeup(allocator);
 }

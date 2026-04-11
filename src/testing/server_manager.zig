@@ -137,10 +137,14 @@ pub const TestServer = struct {
             self.config.port,
         ) catch return false;
 
-        const stream = Io.net.IpAddress.connect(&address, io, .{
-            .mode = .stream,
-            .protocol = .tcp,
-        }) catch return false;
+        const stream = Io.net.IpAddress.connect(
+            &address,
+            io,
+            .{
+                .mode = .stream,
+                .protocol = .tcp,
+            },
+        ) catch return false;
         stream.close(io);
 
         return true;

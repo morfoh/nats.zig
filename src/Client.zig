@@ -733,6 +733,8 @@ io_task_future: ?Io.Future(void) = null,
 /// Event queue for io_task -> callback_task communication.
 /// SpscQueue for non-blocking push from io_task hot path.
 event_queue: ?*SpscQueue(Event) = null,
+/// Serializes event producers so the SPSC queue still sees a single writer.
+event_queue_mutex: Io.Mutex = .init,
 /// Buffer backing the event queue.
 event_queue_buf: ?[]Event = null,
 /// Future for callback task (dispatches events to user handler).
@@ -832,6 +834,7 @@ pub fn connect(
 
     // Initialize event callback infrastructure
     client.event_queue = null;
+    client.event_queue_mutex = .init;
     client.event_queue_buf = null;
     client.callback_task_future = null;
     client.event_handler = opts.event_handler;
@@ -1099,6 +1102,9 @@ pub fn connect(
 // would stall the io_task hot path. Users can monitor via
 // subscription dropped_msgs counters.
 pub fn pushEvent(self: *Client, event: Event) void {
+    self.event_queue_mutex.lock(self.io) catch return;
+    defer self.event_queue_mutex.unlock(self.io);
+
     if (self.event_queue) |q| {
         _ = q.push(event);
     }
@@ -1795,13 +1801,12 @@ pub fn queueSubscribeSync(
     self.sub_ptrs[slot_idx] = sub;
     self.cached_sub = sub;
 
-    // Acquire write mutex for thread-safe buffer access
-    // Lock ordering: sub_mutex -> write_mutex (correct).
-    try self.write_mutex.lock(self.io);
-    defer self.write_mutex.unlock(self.io);
+    // Enqueue SUB onto the ordered outbound ring so it cannot
+    // overtake or be overtaken by queued publishes.
+    self.publish_mutex.lockUncancelable(self.io);
+    defer self.publish_mutex.unlock(self.io);
 
-    const writer = self.active_writer;
-    protocol.Encoder.encodeSub(writer, .{
+    self.encodeSubToRing(.{
         .subject = subject,
         .queue_group = queue_group,
         .sid = sid,
@@ -3386,12 +3391,14 @@ pub fn deinit(self: *Client) void {
     // 5. Cancel callback task and free event queue
     // SAFETY: Set event_queue = null BEFORE canceling to signal callback_task
     // to exit. This prevents use-after-free if callback_task is mid-loop.
+    self.event_queue_mutex.lockUncancelable(self.io);
     const eq = self.event_queue;
     self.event_queue = null; // Signal callback_task to exit
     if (eq) |queue| {
         // Push closed event so callback_task can dispatch final onClose
         _ = queue.push(.{ .closed = {} });
     }
+    self.event_queue_mutex.unlock(self.io);
     if (self.callback_task_future) |*future| {
         _ = future.cancel(self.io);
         self.callback_task_future = null;
@@ -3781,6 +3788,94 @@ fn encodeHPubRawToRing(
 
     @memcpy(buf[pos..][0..payload.len], payload);
     pos += payload.len;
+
+    @memcpy(buf[pos..][0..2], "\r\n");
+    pos += 2;
+
+    self.publish_ring.commit(entry, pos);
+}
+
+/// Encode SUB into publish ring.
+fn encodeSubToRing(
+    self: *Client,
+    args: protocol.SubArgs,
+) !void {
+    try pubsub.validateSubscribe(args.subject);
+    if (args.sid == 0) return error.InvalidSid;
+    if (args.queue_group) |queue| {
+        if (queue.len > 0) {
+            try pubsub.validateQueueGroup(queue);
+        }
+    }
+
+    var max_size: usize = 4 + args.subject.len + 1 + 20 + 2;
+    if (args.queue_group) |queue| {
+        if (queue.len > 0) max_size += queue.len + 1;
+    }
+
+    const entry = self.reserveRingEntry(max_size) orelse
+        return error.PublishBufferFull;
+    const buf = entry[RING_HDR_SIZE..];
+    var pos: usize = 0;
+
+    @memcpy(buf[pos..][0..4], "SUB ");
+    pos += 4;
+
+    @memcpy(buf[pos..][0..args.subject.len], args.subject);
+    pos += args.subject.len;
+
+    if (args.queue_group) |queue| {
+        if (queue.len > 0) {
+            buf[pos] = ' ';
+            pos += 1;
+            @memcpy(buf[pos..][0..queue.len], queue);
+            pos += queue.len;
+        }
+    }
+
+    buf[pos] = ' ';
+    pos += 1;
+    var num_buf: [20]u8 = undefined;
+    const sid_str = writeUsizeToSlice(&num_buf, args.sid);
+    @memcpy(buf[pos..][0..sid_str.len], sid_str);
+    pos += sid_str.len;
+
+    @memcpy(buf[pos..][0..2], "\r\n");
+    pos += 2;
+
+    self.publish_ring.commit(entry, pos);
+}
+
+/// Encode UNSUB into publish ring.
+fn encodeUnsubToRing(
+    self: *Client,
+    args: protocol.commands.UnsubArgs,
+) !void {
+    if (args.sid == 0) return error.InvalidSid;
+
+    var max_size: usize = 6 + 20 + 2;
+    if (args.max_msgs != null) max_size += 1 + 20;
+
+    const entry = self.reserveRingEntry(max_size) orelse
+        return error.PublishBufferFull;
+    const buf = entry[RING_HDR_SIZE..];
+    var pos: usize = 0;
+
+    @memcpy(buf[pos..][0..6], "UNSUB ");
+    pos += 6;
+
+    var num_buf: [20]u8 = undefined;
+    const sid_str = writeUsizeToSlice(&num_buf, args.sid);
+    @memcpy(buf[pos..][0..sid_str.len], sid_str);
+    pos += sid_str.len;
+
+    if (args.max_msgs) |max| {
+        buf[pos] = ' ';
+        pos += 1;
+        const max_str = writeUsizeToSlice(&num_buf, max);
+        @memcpy(buf[pos..][0..max_str.len], max_str);
+        pos += max_str.len;
+    }
 
     @memcpy(buf[pos..][0..2], "\r\n");
     pos += 2;
@@ -4222,6 +4317,9 @@ pub const Subscription = struct {
                 );
                 return msg;
             }
+            if (self.queue.isClosed()) {
+                return error.Closed;
+            }
             if (self.state != .active and
                 self.state != .draining)
             {
@@ -4306,6 +4404,9 @@ pub const Subscription = struct {
                 }
                 return count;
             }
+            if (self.queue.isClosed()) {
+                return error.Closed;
+            }
             if (self.state != .active and
                 self.state != .draining)
             {
@@ -4373,6 +4474,9 @@ pub const Subscription = struct {
                 self.pending_bytes -|= msg_size;
                 return msg;
             }
+            if (self.queue.isClosed()) {
+                return error.Closed;
+            }
             if (self.state != .active and
                 self.state != .draining)
             {
@@ -4433,14 +4537,13 @@ pub const Subscription = struct {
         self.max_msgs = max;
         self.delivered_count = 0;
 
-        // Send UNSUB with max_msgs to server (server tracks count too)
+        // Enqueue UNSUB with max_msgs so it stays ordered with publishes.
         const client = self.client;
         if (State.atomicLoad(&client.state).canSend()) {
-            try client.write_mutex.lock(client.io);
-            defer client.write_mutex.unlock(client.io);
+            client.publish_mutex.lockUncancelable(client.io);
+            defer client.publish_mutex.unlock(client.io);
 
-            const writer = client.active_writer;
-            protocol.Encoder.encodeUnsub(writer, .{
+            client.encodeUnsubToRing(.{
                 .sid = self.sid,
                 .max_msgs = max,
             }) catch return error.EncodingFailed;
@@ -4458,14 +4561,13 @@ pub const Subscription = struct {
 
         self.state = .draining;
 
-        // Send UNSUB to stop new messages (no max_msgs = immediate unsub)
+        // Enqueue UNSUB to stop new messages without violating publish order.
         const client = self.client;
         if (State.atomicLoad(&client.state).canSend()) {
-            try client.write_mutex.lock(client.io);
-            defer client.write_mutex.unlock(client.io);
+            client.publish_mutex.lockUncancelable(client.io);
+            defer client.publish_mutex.unlock(client.io);
 
-            const writer = client.active_writer;
-            protocol.Encoder.encodeUnsub(writer, .{
+            client.encodeUnsubToRing(.{
                 .sid = self.sid,
                 .max_msgs = null,
             }) catch return error.EncodingFailed;
@@ -4746,21 +4848,19 @@ pub const Subscription = struct {
         client.read_mutex.lockUncancelable(client.io);
         defer client.read_mutex.unlock(client.io);
 
-        // Track UNSUB send success
+        // Track UNSUB enqueue success
         var send_failed = false;
 
-        // Send UNSUB protocol if connected
+        // Enqueue UNSUB protocol if connected
         if (can_send) {
-            // Acquire write mutex for thread-safe buffer access
-            client.write_mutex.lockUncancelable(client.io);
-            const writer = client.active_writer;
-            protocol.Encoder.encodeUnsub(writer, .{
+            client.publish_mutex.lockUncancelable(client.io);
+            client.encodeUnsubToRing(.{
                 .sid = self.sid,
                 .max_msgs = null,
             }) catch {
                 send_failed = true;
             };
-            client.write_mutex.unlock(client.io);
+            client.publish_mutex.unlock(client.io);
 
             // Signal auto-flush to send UNSUB promptly
             client.flush_requested.store(true, .release);

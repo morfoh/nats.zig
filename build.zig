@@ -11,15 +11,30 @@ pub fn build(b: *std.Build) void {
         "Enable debug prints for reconnection events (default: false)",
     ) orelse false;
 
-    // Create build options module
+    // Io backend selector.
+    // 'threaded' = std.Io.Threaded (default, OS threads).
+    // 'evented'  = std.Io.Evented (Linux: Uring, BSD: Kqueue, Apple: Dispatch).
+    const io_backend_choice = b.option(
+        []const u8,
+        "io_backend",
+        "Io backend: 'threaded' (default) or 'evented'",
+    ) orelse "threaded";
+
+    // Create build options module. Share a single Module instance
+    // across all consumers (nats, io_backend, ...) — calling
+    // createModule() twice would generate two distinct Modules
+    // pointing at the same options.zig file, which Zig rejects
+    // when both end up in the same compile graph.
     const build_options = b.addOptions();
     build_options.addOption(bool, "enable_debug", enable_debug);
+    build_options.addOption([]const u8, "io_backend", io_backend_choice);
+    const build_options_mod = build_options.createModule();
 
     const nats = b.addModule("nats", .{
         .root_source_file = b.path("src/nats.zig"),
         .target = target,
         .imports = &.{
-            .{ .name = "build_options", .module = build_options.createModule() },
+            .{ .name = "build_options", .module = build_options_mod },
         },
     });
 
@@ -28,6 +43,29 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
+
+    // Backend selector module. Used by entry points (examples,
+    // benchmarks, integration tests) so they can flip between
+    // std.Io.Threaded and std.Io.Evented via -Dio_backend=...
+    // The library module itself does NOT depend on this; only
+    // application code chooses a backend.
+    const io_backend_mod = b.createModule(.{
+        .root_source_file = b.path("src/io_backend.zig"),
+        .target = target,
+        .imports = &.{
+            .{
+                .name = "build_options",
+                .module = build_options_mod,
+            },
+        },
+    });
+
+    // Standalone test for the io_backend selector module. Ensures
+    // src/io_backend.zig compiles under -Dio_backend=threaded and
+    // -Dio_backend=evented.
+    const io_backend_tests = b.addTest(.{ .root_module = io_backend_mod });
+    const run_io_backend_tests = b.addRunArtifact(io_backend_tests);
+    test_step.dependOn(&run_io_backend_tests.step);
 
     // 1. Simple example (hello world - entry point)
     const simple_exe = b.addExecutable(.{
@@ -38,6 +76,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "nats", .module = nats },
+                .{ .name = "io_backend", .module = io_backend_mod },
             },
         }),
     });
@@ -272,6 +311,156 @@ pub fn build(b: *std.Build) void {
     run_req_rep_cb.dependOn(&req_rep_cb_cmd.step);
     req_rep_cb_cmd.step.dependOn(b.getInstallStep());
 
+    // 12. JetStream Publish example
+    const js_pub_exe = b.addExecutable(.{
+        .name = "example-jetstream-publish",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "src/examples/jetstream_publish.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "nats", .module = nats },
+            },
+        }),
+    });
+    b.installArtifact(js_pub_exe);
+
+    const run_js_pub = b.step(
+        "run-jetstream-publish",
+        "Run JetStream publish example",
+    );
+    const js_pub_cmd = b.addRunArtifact(js_pub_exe);
+    run_js_pub.dependOn(&js_pub_cmd.step);
+    js_pub_cmd.step.dependOn(b.getInstallStep());
+
+    // 13. JetStream Consume example
+    const js_consume_exe = b.addExecutable(.{
+        .name = "example-jetstream-consume",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "src/examples/jetstream_consume.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "nats", .module = nats },
+            },
+        }),
+    });
+    b.installArtifact(js_consume_exe);
+
+    const run_js_consume = b.step(
+        "run-jetstream-consume",
+        "Run JetStream pull consumer example",
+    );
+    const js_consume_cmd = b.addRunArtifact(
+        js_consume_exe,
+    );
+    run_js_consume.dependOn(&js_consume_cmd.step);
+    js_consume_cmd.step.dependOn(b.getInstallStep());
+
+    // 14. JetStream Push Consumer example
+    const js_push_exe = b.addExecutable(.{
+        .name = "example-jetstream-push",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "src/examples/jetstream_push.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "nats", .module = nats },
+            },
+        }),
+    });
+    b.installArtifact(js_push_exe);
+
+    const run_js_push = b.step(
+        "run-jetstream-push",
+        "Run JetStream push consumer example",
+    );
+    const js_push_cmd = b.addRunArtifact(js_push_exe);
+    run_js_push.dependOn(&js_push_cmd.step);
+    js_push_cmd.step.dependOn(b.getInstallStep());
+
+    // 15. JetStream Async Publish example
+    const js_async_exe = b.addExecutable(.{
+        .name = "example-jetstream-async-publish",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "src/examples/jetstream_async_publish.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "nats", .module = nats },
+            },
+        }),
+    });
+    b.installArtifact(js_async_exe);
+
+    const run_js_async = b.step(
+        "run-jetstream-async-publish",
+        "Run JetStream async publish example",
+    );
+    const js_async_cmd = b.addRunArtifact(
+        js_async_exe,
+    );
+    run_js_async.dependOn(&js_async_cmd.step);
+    js_async_cmd.step.dependOn(b.getInstallStep());
+
+    // 16. Key-Value Store example
+    const kv_exe = b.addExecutable(.{
+        .name = "example-kv",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "src/examples/kv.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "nats", .module = nats },
+            },
+        }),
+    });
+    b.installArtifact(kv_exe);
+
+    const run_kv = b.step(
+        "run-kv",
+        "Run KV store example",
+    );
+    const kv_cmd = b.addRunArtifact(kv_exe);
+    run_kv.dependOn(&kv_cmd.step);
+    kv_cmd.step.dependOn(b.getInstallStep());
+
+    // 17. Key-Value Watch example
+    const kv_watch_exe = b.addExecutable(.{
+        .name = "example-kv-watch",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "src/examples/kv_watch.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "nats", .module = nats },
+            },
+        }),
+    });
+    b.installArtifact(kv_watch_exe);
+
+    const run_kv_watch = b.step(
+        "run-kv-watch",
+        "Run KV watch example",
+    );
+    const kv_watch_cmd = b.addRunArtifact(
+        kv_watch_exe,
+    );
+    run_kv_watch.dependOn(&kv_watch_cmd.step);
+    kv_watch_cmd.step.dependOn(b.getInstallStep());
+
     // NATS by Example: Pub-Sub messaging
     const nbe_pubsub_exe = b.addExecutable(.{
         .name = "nbe-messaging-pub-sub",
@@ -446,6 +635,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "nats", .module = nats },
+                .{ .name = "io_backend", .module = io_backend_mod },
             },
         }),
     });
@@ -468,6 +658,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "nats", .module = nats },
+                .{ .name = "io_backend", .module = io_backend_mod },
             },
         }),
     });
@@ -491,6 +682,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "nats", .module = nats },
+                .{ .name = "io_backend", .module = io_backend_mod },
             },
         }),
     });
