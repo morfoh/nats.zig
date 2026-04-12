@@ -2595,31 +2595,33 @@ pub fn requestMsg(
     const reply = try self.requestPrepReply(&waiter, &reply_buf);
     errdefer self.cleanupRespWaiter(&waiter, reply);
 
-    self.publish_mutex.lockUncancelable(self.io);
-    defer self.publish_mutex.unlock(self.io);
+    {
+        self.publish_mutex.lockUncancelable(self.io);
+        defer self.publish_mutex.unlock(self.io);
 
-    if (msg.headers) |hdrs| {
-        try self.encodeHPubRawToRing(
-            msg.subject,
-            reply,
-            hdrs,
-            msg.data,
+        if (msg.headers) |hdrs| {
+            try self.encodeHPubRawToRing(
+                msg.subject,
+                reply,
+                hdrs,
+                msg.data,
+            );
+        } else {
+            try self.encodePubToRing(
+                msg.subject,
+                reply,
+                msg.data,
+            );
+        }
+
+        _ = self.statistics.msgs_out.fetchAdd(1, .monotonic);
+        _ = self.statistics.bytes_out.fetchAdd(
+            msg.data.len,
+            .monotonic,
         );
-    } else {
-        try self.encodePubToRing(
-            msg.subject,
-            reply,
-            msg.data,
-        );
+
+        self.flush_requested.store(true, .release);
     }
-
-    _ = self.statistics.msgs_out.fetchAdd(1, .monotonic);
-    _ = self.statistics.bytes_out.fetchAdd(
-        msg.data.len,
-        .monotonic,
-    );
-
-    self.flush_requested.store(true, .release);
 
     return self.requestAwaitResp(&waiter, reply, timeout_ms);
 }
