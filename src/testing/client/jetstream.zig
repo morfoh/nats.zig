@@ -22,6 +22,15 @@ fn threadSleepNs(ns: u64) void {
     _ = std.posix.system.nanosleep(&ts, &ts);
 }
 
+var push_heartbeat_err_seen =
+    std.atomic.Value(bool).init(false);
+
+fn pushHeartbeatErrHandler(err: anyerror) void {
+    if (err == error.NoHeartbeat) {
+        push_heartbeat_err_seen.store(true, .release);
+    }
+}
+
 pub fn testStreamCreateAndInfo(
     allocator: std.mem.Allocator,
 ) void {
@@ -5014,7 +5023,7 @@ pub fn testPushConsumerBasic(
         count: u32 = 0,
         pub fn onMessage(
             self: *@This(),
-            msg: *nats.jetstream.JsMsg,
+            msg: *nats.jetstream.BorrowedJsMsg,
         ) void {
             _ = msg;
             self.count += 1;
@@ -5035,7 +5044,7 @@ pub fn testPushConsumerBasic(
     push_sub.setDeliverSubject(deliver_subj);
 
     var ctx = push_sub.consume(
-        nats.jetstream.consumer.JsMsgHandler.init(
+        nats.jetstream.PushMsgHandler.init(
             Counter,
             &counter,
         ),
@@ -5108,6 +5117,284 @@ pub fn testPushConsumerBasic(
     };
     d.deinit();
     reportResult("js_push_basic", true, "");
+}
+
+pub fn testPushConsumerBorrowedAck(
+    allocator: std.mem.Allocator,
+) void {
+    const name = "js_push_borrowed_ack";
+    var url_buf: [64]u8 = undefined;
+    const url = formatUrl(&url_buf, js_port);
+
+    const io = utils.newIo(allocator);
+    defer io.deinit();
+
+    const client = nats.Client.connect(
+        allocator,
+        io.io(),
+        url,
+        .{ .reconnect = false },
+    ) catch {
+        reportResult(name, false, "connect failed");
+        return;
+    };
+    defer client.deinit();
+
+    var js = nats.jetstream.JetStream.init(
+        client,
+        .{},
+    );
+
+    var stream = js.createStream(.{
+        .name = "TEST_PUSH_ACK",
+        .subjects = &.{"push.ack.>"},
+        .storage = .memory,
+    }) catch {
+        reportResult(name, false, "create stream");
+        return;
+    };
+    defer stream.deinit();
+
+    const Handler = struct {
+        count: u32 = 0,
+        saw_expected_data: bool = false,
+        ack_failed: bool = false,
+
+        pub fn onMessage(
+            self: *@This(),
+            msg: *nats.jetstream.BorrowedJsMsg,
+        ) void {
+            if (std.mem.eql(
+                u8,
+                msg.data(),
+                "ack-data",
+            )) {
+                self.saw_expected_data = true;
+            }
+            msg.ack() catch {
+                self.ack_failed = true;
+                return;
+            };
+            self.count += 1;
+        }
+    };
+
+    var handler = Handler{};
+    const deliver_subj = "_PUSH_ACK_DELIVER.test";
+    var push_sub = nats.jetstream.PushSubscription{
+        .js = &js,
+        .stream = "TEST_PUSH_ACK",
+    };
+    push_sub.setConsumer("push-ack-c");
+    push_sub.setDeliverSubject(deliver_subj);
+
+    var ctx = push_sub.consume(
+        nats.jetstream.PushMsgHandler.init(
+            Handler,
+            &handler,
+        ),
+        .{},
+    ) catch {
+        reportResult(name, false, "consume failed");
+        return;
+    };
+
+    var pc = js.createPushConsumer(
+        "TEST_PUSH_ACK",
+        .{
+            .name = "push-ack-c",
+            .deliver_subject = deliver_subj,
+            .ack_policy = .explicit,
+            .ack_wait = 1_000_000_000,
+        },
+    ) catch {
+        ctx.stop();
+        ctx.deinit();
+        reportResult(name, false, "create push cons");
+        return;
+    };
+    pc.deinit();
+
+    var ack = js.publish(
+        "push.ack.data",
+        "ack-data",
+    ) catch {
+        ctx.stop();
+        ctx.deinit();
+        reportResult(name, false, "publish failed");
+        return;
+    };
+    ack.deinit();
+
+    var wait: u32 = 0;
+    while (handler.count < 1 and
+        !handler.ack_failed and
+        wait < 50) : (wait += 1)
+    {
+        threadSleepNs(100_000_000);
+    }
+
+    if (handler.ack_failed) {
+        ctx.stop();
+        ctx.deinit();
+        reportResult(name, false, "ack failed");
+        return;
+    }
+    if (handler.count != 1 or !handler.saw_expected_data) {
+        ctx.stop();
+        ctx.deinit();
+        reportResult(name, false, "callback did not ack data");
+        return;
+    }
+
+    var ack_cleared = false;
+    var info_wait: u32 = 0;
+    while (info_wait < 30) : (info_wait += 1) {
+        var info = js.consumerInfo(
+            "TEST_PUSH_ACK",
+            "push-ack-c",
+        ) catch {
+            ctx.stop();
+            ctx.deinit();
+            reportResult(name, false, "consumer info");
+            return;
+        };
+        defer info.deinit();
+
+        if (info.value.num_ack_pending == 0) {
+            ack_cleared = true;
+            break;
+        }
+        threadSleepNs(100_000_000);
+    }
+
+    ctx.stop();
+    ctx.deinit();
+
+    if (!ack_cleared) {
+        reportResult(name, false, "ack still pending");
+        return;
+    }
+
+    var d = js.deleteStream(
+        "TEST_PUSH_ACK",
+    ) catch {
+        reportResult(name, true, "");
+        return;
+    };
+    d.deinit();
+    reportResult(name, true, "");
+}
+
+pub fn testPushConsumerHeartbeatErrHandler(
+    allocator: std.mem.Allocator,
+) void {
+    const name = "js_push_heartbeat";
+    var url_buf: [64]u8 = undefined;
+    const url = formatUrl(&url_buf, js_port);
+
+    const io = utils.newIo(allocator);
+    defer io.deinit();
+
+    const client = nats.Client.connect(
+        allocator,
+        io.io(),
+        url,
+        .{ .reconnect = false },
+    ) catch {
+        reportResult(name, false, "connect failed");
+        return;
+    };
+    defer client.deinit();
+
+    var js = nats.jetstream.JetStream.init(
+        client,
+        .{},
+    );
+
+    var stream = js.createStream(.{
+        .name = "TEST_PUSH_HB",
+        .subjects = &.{"push.hb.>"},
+        .storage = .memory,
+    }) catch {
+        reportResult(name, false, "create stream");
+        return;
+    };
+    defer stream.deinit();
+
+    const Handler = struct {
+        pub fn onMessage(
+            self: *@This(),
+            msg: *nats.jetstream.BorrowedJsMsg,
+        ) void {
+            _ = self;
+            _ = msg;
+        }
+    };
+
+    var handler = Handler{};
+    push_heartbeat_err_seen.store(false, .release);
+
+    const deliver_subj = "_PUSH_HB_DELIVER.test";
+    var push_sub = nats.jetstream.PushSubscription{
+        .js = &js,
+        .stream = "TEST_PUSH_HB",
+    };
+    push_sub.setConsumer("push-hb-c");
+    push_sub.setDeliverSubject(deliver_subj);
+
+    var ctx = push_sub.consume(
+        nats.jetstream.PushMsgHandler.init(
+            Handler,
+            &handler,
+        ),
+        .{
+            .heartbeat_ms = 200,
+            .err_handler = pushHeartbeatErrHandler,
+        },
+    ) catch {
+        reportResult(name, false, "consume failed");
+        return;
+    };
+
+    var pc = js.createPushConsumer(
+        "TEST_PUSH_HB",
+        .{
+            .name = "push-hb-c",
+            .deliver_subject = deliver_subj,
+            .ack_policy = .none,
+        },
+    ) catch {
+        ctx.stop();
+        ctx.deinit();
+        reportResult(name, false, "create push cons");
+        return;
+    };
+    pc.deinit();
+
+    var wait: u32 = 0;
+    while (!push_heartbeat_err_seen.load(.acquire) and
+        wait < 40) : (wait += 1)
+    {
+        threadSleepNs(100_000_000);
+    }
+
+    ctx.stop();
+    ctx.deinit();
+
+    if (!push_heartbeat_err_seen.load(.acquire)) {
+        reportResult(name, false, "no heartbeat error missing");
+        return;
+    }
+
+    var d = js.deleteStream(
+        "TEST_PUSH_HB",
+    ) catch {
+        reportResult(name, true, "");
+        return;
+    };
+    d.deinit();
+    reportResult(name, true, "");
 }
 
 pub fn testPublishWithTTL(
@@ -7422,6 +7709,44 @@ pub fn testPublishAsyncFutureWait(
         return;
     }
 
+    var churn = std.ArrayList([]u8).empty;
+    defer {
+        for (churn.items) |buf| allocator.free(buf);
+        churn.deinit(allocator);
+    }
+    for (0..32) |_| {
+        const buf = allocator.alloc(u8, 64) catch {
+            reportResult(
+                "js_async_wait",
+                false,
+                "alloc churn failed",
+            );
+            return;
+        };
+        churn.append(allocator, buf) catch {
+            allocator.free(buf);
+            reportResult(
+                "js_async_wait",
+                false,
+                "alloc churn append failed",
+            );
+            return;
+        };
+    }
+
+    if (ack.stream == null or !std.mem.eql(
+        u8,
+        ack.stream.?,
+        "TEST_ASYNC_WAIT",
+    )) {
+        reportResult(
+            "js_async_wait",
+            false,
+            "ack stream invalid",
+        );
+        return;
+    }
+
     var d = js.deleteStream(
         "TEST_ASYNC_WAIT",
     ) catch {
@@ -7434,6 +7759,119 @@ pub fn testPublishAsyncFutureWait(
     };
     d.deinit();
     reportResult("js_async_wait", true, "");
+}
+
+pub fn testPublishAsyncExpectedSeqParity(
+    allocator: std.mem.Allocator,
+) void {
+    const name = "js_async_exp_seq";
+    var url_buf: [64]u8 = undefined;
+    const url = formatUrl(&url_buf, js_port);
+
+    const io = utils.newIo(allocator);
+    defer io.deinit();
+
+    const client = nats.Client.connect(
+        allocator,
+        io.io(),
+        url,
+        .{ .reconnect = false },
+    ) catch {
+        reportResult(name, false, "connect failed");
+        return;
+    };
+    defer client.deinit();
+
+    var js = nats.jetstream.JetStream.init(
+        client,
+        .{},
+    );
+
+    var s = js.createStream(.{
+        .name = "TEST_ASYNC_EXPSEQ",
+        .subjects = &.{"atest.expseq.>"},
+        .storage = .memory,
+    }) catch {
+        reportResult(name, false, "create stream");
+        return;
+    };
+    defer s.deinit();
+
+    var a1 = js.publish(
+        "atest.expseq.data",
+        "first",
+    ) catch {
+        reportResult(name, false, "sync pub 1");
+        return;
+    };
+    a1.deinit();
+
+    var a2 = js.publishWithOpts(
+        "atest.expseq.data",
+        "second",
+        .{ .expected_last_seq = 1 },
+    ) catch {
+        reportResult(name, false, "sync pub 2");
+        return;
+    };
+    a2.deinit();
+
+    var ap = nats.jetstream.AsyncPublisher.init(
+        &js,
+        .{},
+    ) catch {
+        reportResult(name, false, "init ap");
+        return;
+    };
+    defer ap.deinit();
+
+    const fut = ap.publishWithOpts(
+        "atest.expseq.data",
+        "should-fail",
+        .{ .expected_last_seq = 0 },
+    ) catch {
+        reportResult(name, false, "async publish");
+        return;
+    };
+    defer fut.deinit();
+
+    const ack_or_err = fut.wait(5000);
+    if (ack_or_err) |ack| {
+        _ = ack;
+        reportResult(name, false, "should have failed");
+        return;
+    } else |err| {
+        if (err != error.ApiError) {
+            reportResult(name, false, "wrong error");
+            return;
+        }
+    }
+
+    var info = js.streamInfo(
+        "TEST_ASYNC_EXPSEQ",
+    ) catch {
+        reportResult(name, false, "stream info");
+        return;
+    };
+    defer info.deinit();
+
+    const msg_count = if (info.value.state) |st|
+        st.messages
+    else
+        0;
+    if (msg_count != 2) {
+        reportResult(name, false, "wrong msg count");
+        return;
+    }
+
+    var d = js.deleteStream(
+        "TEST_ASYNC_EXPSEQ",
+    ) catch {
+        reportResult(name, true, "");
+        return;
+    };
+    d.deinit();
+    reportResult(name, true, "");
 }
 
 pub fn testKvEmptyValue(
@@ -9440,7 +9878,7 @@ fn testPushAfterReconnect(
         count: u32 = 0,
         pub fn onMessage(
             self: *@This(),
-            msg: *nats.jetstream.JsMsg,
+            msg: *nats.jetstream.BorrowedJsMsg,
         ) void {
             _ = msg;
             self.count += 1;
@@ -9458,7 +9896,7 @@ fn testPushAfterReconnect(
     push1.setDeliverSubject(deliver1);
 
     var ctx1 = push1.consume(
-        nats.jetstream.consumer.JsMsgHandler.init(
+        nats.jetstream.PushMsgHandler.init(
             Counter,
             &counter1,
         ),
@@ -9573,7 +10011,7 @@ fn testPushAfterReconnect(
     push2.setDeliverSubject(deliver2);
 
     var ctx2 = push2.consume(
-        nats.jetstream.consumer.JsMsgHandler.init(
+        nats.jetstream.PushMsgHandler.init(
             Counter,
             &counter2,
         ),
@@ -9706,6 +10144,7 @@ pub fn runAll(
     testBatchFetch(allocator);
     testPublishDedup(allocator);
     testPublishExpectedSeq(allocator);
+    testPublishAsyncExpectedSeqParity(allocator);
     // Stream ops
     testPurgeStream(allocator);
     testStreamUpdate(allocator);
@@ -9734,6 +10173,8 @@ pub fn runAll(
     testCreateOrUpdateConsumer(allocator);
     testPauseResumeConsumer(allocator);
     testPushConsumerBasic(allocator);
+    testPushConsumerBorrowedAck(allocator);
+    testPushConsumerHeartbeatErrHandler(allocator);
     testPublishWithTTL(allocator);
     testKvUpdateBucket(allocator);
     testKvCreateOrUpdateBucket(allocator);

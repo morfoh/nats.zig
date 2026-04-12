@@ -7,7 +7,9 @@ const std = @import("std");
 const nats = @import("../nats.zig");
 const Client = nats.Client;
 
-/// JetStream message with ack protocol support.
+/// Owned JetStream message with ack protocol support.
+/// Used by pull/fetch APIs that transfer message ownership
+/// to the caller. Call deinit() when finished.
 pub const JsMsg = struct {
     msg: Client.Message,
     client: *Client,
@@ -155,6 +157,144 @@ pub const JsMsg = struct {
     /// Frees the underlying message.
     pub fn deinit(self: *JsMsg) void {
         self.msg.deinit();
+    }
+};
+
+/// Borrowed JetStream message for push-consumer callbacks.
+/// Valid only for the duration of the callback invocation.
+/// Supports ack/nak/wpi/term but does NOT own the underlying
+/// message and therefore has no deinit(). This is intentionally
+/// distinct from JsMsg because push callbacks do not receive
+/// ownership of the delivered Client.Message.
+pub const BorrowedJsMsg = struct {
+    msg: *const Client.Message,
+    client: *Client,
+    acked: bool = false,
+
+    /// Acknowledges the message (+ACK).
+    pub fn ack(self: *BorrowedJsMsg) !void {
+        std.debug.assert(!self.acked);
+        const reply = self.msg.reply_to orelse
+            return;
+        std.debug.assert(reply.len > 0);
+        try self.client.publish(reply, "+ACK");
+        self.acked = true;
+    }
+
+    /// Acknowledges and waits for server confirmation.
+    pub fn doubleAck(
+        self: *BorrowedJsMsg,
+        timeout_ms: u32,
+    ) !void {
+        std.debug.assert(!self.acked);
+        std.debug.assert(timeout_ms > 0);
+        const reply = self.msg.reply_to orelse
+            return;
+        std.debug.assert(reply.len > 0);
+        const resp = self.client.request(
+            reply,
+            "+ACK",
+            timeout_ms,
+        ) catch |err| return err;
+        if (resp) |r| {
+            var m = r;
+            m.deinit();
+        }
+        self.acked = true;
+    }
+
+    /// Negatively acknowledges -- triggers redelivery (-NAK).
+    pub fn nak(self: *BorrowedJsMsg) !void {
+        std.debug.assert(!self.acked);
+        const reply = self.msg.reply_to orelse
+            return;
+        std.debug.assert(reply.len > 0);
+        try self.client.publish(reply, "-NAK");
+        self.acked = true;
+    }
+
+    /// Negatively acknowledges with a redelivery delay.
+    pub fn nakWithDelay(
+        self: *BorrowedJsMsg,
+        delay_ns: i64,
+    ) !void {
+        std.debug.assert(!self.acked);
+        std.debug.assert(delay_ns > 0);
+        const reply = self.msg.reply_to orelse
+            return;
+        std.debug.assert(reply.len > 0);
+        var buf: [64]u8 = undefined;
+        const payload = std.fmt.bufPrint(
+            &buf,
+            "-NAK {{\"delay\":{d}}}",
+            .{delay_ns},
+        ) catch unreachable;
+        try self.client.publish(reply, payload);
+        self.acked = true;
+    }
+
+    /// Signals work in progress (+WPI).
+    pub fn inProgress(self: *BorrowedJsMsg) !void {
+        const reply = self.msg.reply_to orelse
+            return;
+        std.debug.assert(reply.len > 0);
+        try self.client.publish(reply, "+WPI");
+    }
+
+    /// Terminates message processing (+TERM).
+    pub fn term(self: *BorrowedJsMsg) !void {
+        std.debug.assert(!self.acked);
+        const reply = self.msg.reply_to orelse
+            return;
+        std.debug.assert(reply.len > 0);
+        try self.client.publish(reply, "+TERM");
+        self.acked = true;
+    }
+
+    /// Terminates with a reason string.
+    pub fn termWithReason(
+        self: *BorrowedJsMsg,
+        reason: []const u8,
+    ) !void {
+        std.debug.assert(!self.acked);
+        std.debug.assert(reason.len > 0);
+        std.debug.assert(reason.len <= 506);
+        const reply = self.msg.reply_to orelse
+            return;
+        std.debug.assert(reply.len > 0);
+        var buf: [512]u8 = undefined;
+        const payload = std.fmt.bufPrint(
+            &buf,
+            "+TERM {s}",
+            .{reason},
+        ) catch unreachable;
+        try self.client.publish(reply, payload);
+        self.acked = true;
+    }
+
+    pub fn data(self: *const BorrowedJsMsg) []const u8 {
+        return self.msg.data;
+    }
+
+    pub fn subject(self: *const BorrowedJsMsg) []const u8 {
+        return self.msg.subject;
+    }
+
+    pub fn headers(self: *const BorrowedJsMsg) ?[]const u8 {
+        return self.msg.headers;
+    }
+
+    pub fn replyTo(self: *const BorrowedJsMsg) ?[]const u8 {
+        return self.msg.reply_to;
+    }
+
+    pub fn metadata(
+        self: *const BorrowedJsMsg,
+    ) ?MsgMetadata {
+        const reply = self.msg.reply_to orelse
+            return null;
+        std.debug.assert(reply.len > 0);
+        return parseMsgMetadata(reply);
     }
 };
 

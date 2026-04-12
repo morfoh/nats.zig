@@ -6,6 +6,7 @@ const Allocator = std.mem.Allocator;
 
 const types = @import("types.zig");
 const errors = @import("errors.zig");
+const publish_headers = @import("publish_headers.zig");
 
 const nats = @import("../nats.zig");
 const Client = nats.Client;
@@ -1139,70 +1140,13 @@ pub fn publishWithOpts(
     std.debug.assert(subject.len > 0);
     std.debug.assert(payload.len <= 1048576);
 
-    var hdr_entries: [6]headers.Entry = undefined;
-    var hdr_count: usize = 0;
-
-    if (opts.msg_id) |v| {
-        hdr_entries[hdr_count] = .{
-            .key = headers.HeaderName.msg_id,
-            .value = v,
-        };
-        hdr_count += 1;
-    }
-    if (opts.expected_stream) |v| {
-        hdr_entries[hdr_count] = .{
-            .key = headers.HeaderName.expected_stream,
-            .value = v,
-        };
-        hdr_count += 1;
-    }
-    if (opts.expected_last_msg_id) |v| {
-        hdr_entries[hdr_count] = .{
-            .key = headers.HeaderName.expected_last_msg_id,
-            .value = v,
-        };
-        hdr_count += 1;
-    }
-
-    // Numeric headers need formatting
-    var seq_buf: [20]u8 = undefined;
-    if (opts.expected_last_seq) |v| {
-        const s = std.fmt.bufPrint(
-            &seq_buf,
-            "{d}",
-            .{v},
-        ) catch unreachable;
-        hdr_entries[hdr_count] = .{
-            .key = headers.HeaderName.expected_last_seq,
-            .value = s,
-        };
-        hdr_count += 1;
-    }
-    var subj_seq_buf: [20]u8 = undefined;
-    if (opts.expected_last_subj_seq) |v| {
-        const s = std.fmt.bufPrint(
-            &subj_seq_buf,
-            "{d}",
-            .{v},
-        ) catch unreachable;
-        hdr_entries[hdr_count] = .{
-            .key = headers.HeaderName.expected_last_subj_seq,
-            .value = s,
-        };
-        hdr_count += 1;
-    }
-    if (opts.ttl) |v| {
-        hdr_entries[hdr_count] = .{
-            .key = headers.HeaderName.msg_ttl,
-            .value = v,
-        };
-        hdr_count += 1;
-    }
+    var hdrs: publish_headers.PublishHeaderSet = undefined;
+    hdrs.populate(opts);
 
     return self.publishRetry(
         subject,
         payload,
-        hdr_entries[0..hdr_count],
+        hdrs.slice(),
     );
 }
 

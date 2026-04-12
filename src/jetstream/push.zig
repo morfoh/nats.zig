@@ -14,10 +14,50 @@ const Client = nats.Client;
 const types = @import("types.zig");
 const errors = @import("errors.zig");
 const consumer_mod = @import("consumer.zig");
-const JsMsg = @import("message.zig").JsMsg;
+const BorrowedJsMsg = @import("message.zig").BorrowedJsMsg;
 const JetStream = @import("JetStream.zig");
 
-const JsMsgHandler = consumer_mod.JsMsgHandler;
+pub const PushMsgHandler = struct {
+    ptr: *anyopaque,
+    vtable: *const VTable,
+
+    pub const VTable = struct {
+        onMessage: *const fn (
+            *anyopaque,
+            *BorrowedJsMsg,
+        ) void,
+    };
+
+    pub fn init(
+        comptime T: type,
+        ptr: *T,
+    ) PushMsgHandler {
+        const gen = struct {
+            fn onMessage(
+                p: *anyopaque,
+                msg: *BorrowedJsMsg,
+            ) void {
+                const self: *T = @ptrCast(
+                    @alignCast(p),
+                );
+                self.onMessage(msg);
+            }
+        };
+        return .{
+            .ptr = ptr,
+            .vtable = &.{
+                .onMessage = gen.onMessage,
+            },
+        };
+    }
+
+    pub fn dispatch(
+        self: PushMsgHandler,
+        msg: *BorrowedJsMsg,
+    ) void {
+        self.vtable.onMessage(self.ptr, msg);
+    }
+};
 
 /// Push-based consumer subscription. Created after a
 /// push consumer exists on the server. Subscribe to
@@ -99,6 +139,13 @@ pub const PushSubscription = struct {
 
     /// Options for push consumption.
     pub const ConsumeOpts = struct {
+        /// Expected idle-heartbeat interval in ms.
+        /// If no message or heartbeat arrives within
+        /// 2x this interval, err_handler is called
+        /// with error.NoHeartbeat. In normal use this
+        /// should match the consumer's server-side
+        /// idle_heartbeat configuration to avoid false
+        /// positives during idle periods.
         heartbeat_ms: u32 = 0,
         err_handler: ?consumer_mod.ErrHandler = null,
     };
@@ -109,10 +156,9 @@ pub const PushSubscription = struct {
     /// To stop: call the returned context's deinit().
     pub fn consume(
         self: *PushSubscription,
-        handler: JsMsgHandler,
+        handler: PushMsgHandler,
         opts: ConsumeOpts,
     ) !PushConsumeContext {
-        _ = opts;
         std.debug.assert(self.deliver_len > 0);
         std.debug.assert(self.consumer_len > 0);
 
@@ -129,6 +175,10 @@ pub const PushSubscription = struct {
             .handler = handler,
             .client = client,
             .allocator = client.allocator,
+            .err_handler = opts.err_handler,
+            .last_activity_ns = std.atomic.Value(u64).init(
+                getNowNs(client.io),
+            ),
         };
 
         const qg: ?[]const u8 =
@@ -153,33 +203,58 @@ pub const PushSubscription = struct {
         // before the caller creates the push consumer.
         try client.flush(5_000_000_000);
 
-        return PushConsumeContext{
+        var ctx = PushConsumeContext{
             .sub = sub,
             .wrapper = wrapper,
+            .io = client.io,
         };
+        if (opts.heartbeat_ms > 0) {
+            ctx.monitor_future = client.io.async(
+                pushHeartbeatMonitorTask,
+                .{ wrapper, opts.heartbeat_ms },
+            );
+        }
+        return ctx;
     }
 };
 
 /// Heap-allocated wrapper that bridges Client.MsgHandler
-/// (receives *const Message) to JsMsgHandler (receives
-/// *JsMsg). Lives on the heap because the callback
+/// (receives *const Message) to PushMsgHandler (receives
+/// *BorrowedJsMsg). Lives on the heap because the callback
 /// subscription outlives the consume() call.
 const PushCallbackWrapper = struct {
-    handler: JsMsgHandler,
+    handler: PushMsgHandler,
     client: *Client,
     allocator: Allocator,
+    err_handler: ?consumer_mod.ErrHandler = null,
+    last_activity_ns: std.atomic.Value(u64) =
+        std.atomic.Value(u64).init(0),
 
     pub fn onMessage(
         self: *PushCallbackWrapper,
         msg: *const Client.Message,
     ) void {
-        // Create a mutable copy of the message for
-        // JsMsg (ack needs to publish to reply_to).
-        // The callback owns `msg` -- it will be
-        // deinited by callbackDrainFn after we return.
-        // JsMsg wraps the message but doesn't own it.
-        var js_msg = JsMsg{
-            .msg = msg.*,
+        self.last_activity_ns.store(
+            getNowNs(self.client.io),
+            .release,
+        );
+
+        if (msg.status()) |code| {
+            if (code == 100) {
+                if (msg.reply_to) |reply| {
+                    self.client.publish(reply, "") catch |err| {
+                        if (self.err_handler) |eh| eh(err);
+                    };
+                }
+                return;
+            }
+        }
+
+        // Borrow-only callback message. The underlying
+        // Client.Message is freed by callbackDrainFn
+        // after handler.dispatch() returns.
+        var js_msg = BorrowedJsMsg{
+            .msg = msg,
             .client = self.client,
         };
         self.handler.dispatch(&js_msg);
@@ -192,9 +267,15 @@ const PushCallbackWrapper = struct {
 pub const PushConsumeContext = struct {
     sub: ?*Client.Sub,
     wrapper: *PushCallbackWrapper,
+    monitor_future: ?std.Io.Future(void) = null,
+    io: std.Io = undefined,
 
     /// Stops consumption. Safe to call before deinit.
     pub fn stop(self: *PushConsumeContext) void {
+        if (self.monitor_future) |*future| {
+            _ = future.cancel(self.io);
+            self.monitor_future = null;
+        }
         if (self.sub) |s| {
             s.deinit();
             self.sub = null;
@@ -209,3 +290,43 @@ pub const PushConsumeContext = struct {
         );
     }
 };
+
+fn getNowNs(io: std.Io) u64 {
+    const ts = std.Io.Timestamp.now(io, .awake);
+    return @intCast(ts.nanoseconds);
+}
+
+fn pushHeartbeatMonitorTask(
+    wrapper: *PushCallbackWrapper,
+    heartbeat_ms: u32,
+) void {
+    std.debug.assert(heartbeat_ms > 0);
+    const io = wrapper.client.io;
+    const timeout_ns =
+        @as(u64, heartbeat_ms) * 2 * std.time.ns_per_ms;
+    var notified = false;
+
+    while (true) {
+        io.sleep(
+            .fromMilliseconds(heartbeat_ms),
+            .awake,
+        ) catch |err| {
+            if (err == error.Canceled) return;
+            return;
+        };
+
+        const last =
+            wrapper.last_activity_ns.load(.acquire);
+        const now = getNowNs(io);
+        if (now -| last >= timeout_ns) {
+            if (!notified) {
+                if (wrapper.err_handler) |eh| {
+                    eh(errors.Error.NoHeartbeat);
+                }
+                notified = true;
+            }
+        } else {
+            notified = false;
+        }
+    }
+}

@@ -847,8 +847,8 @@ defer cons.deinit();
 var pull = js_mod.PullSubscription{
     .js = &js,
     .stream = "ORDERS",
-    .consumer = "processor",
 };
+pull.setConsumer("processor");
 var result = try pull.fetch(.{
     .max_messages = 10,
     .timeout_ms = 5000,
@@ -932,6 +932,17 @@ while (try watcher.next(5000)) |*update| {
   auto-configured for requests > 10s
 - **Ordered consumer** -- gap-free delivery with
   auto-recreate on sequence gaps
+
+**Push Consumers:**
+- **Callback delivery** -- `push.consume(handler, opts)`
+  with `PushMsgHandler`
+- **Borrowed callback messages** -- push callbacks
+  receive `BorrowedJsMsg`, which supports ack/nak/etc
+  but is valid only for the duration of the callback
+- **Heartbeat monitoring** -- optional client-side
+  watchdog via `ConsumeOpts.heartbeat_ms`; set this to
+  match the consumer's server-side `idle_heartbeat`
+  to avoid false positives
 
 **Message Ack Protocol:**
 - ack, nak, nak with delay, in-progress, term,
@@ -1759,7 +1770,9 @@ if (client.connectedServerVersion()) |version| {
 | Messages iterator | `pull.messages(opts)` | `!MessagesContext` |
 | Consume callback | `pull.consume(handler, opts)` | `!ConsumeContext` |
 | **Push Consumers** | | |
-| Push consume | `push.consume(handler, opts)` | `!ConsumeContext` |
+| Push message handler | `jetstream.PushMsgHandler.init(T, &handler)` | `PushMsgHandler` |
+| Push consume | `push.consume(handler, opts)` | `!PushConsumeContext` |
+| Push callback msg | `BorrowedJsMsg` | borrowed, no `deinit()` |
 | **Message Ack** | | |
 | Message metadata | `msg.metadata()` | `?MsgMetadata` |
 | Ack message | `msg.ack()` | `!void` |

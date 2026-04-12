@@ -10,12 +10,12 @@ const Allocator = std.mem.Allocator;
 
 const nats = @import("../nats.zig");
 const Client = nats.Client;
-const headers = nats.protocol.headers;
 
 const types = @import("types.zig");
 const errors = @import("errors.zig");
 const JetStream = @import("JetStream.zig");
 const Io = std.Io;
+const publish_headers = @import("publish_headers.zig");
 
 /// Published ack future. Returned by publishAsync().
 /// Call wait() to block until the ack arrives.
@@ -26,6 +26,8 @@ pub const PubAckFuture = struct {
     _err: ?anyerror = null,
     _id_buf: [token_size]u8 = undefined,
     _allocator: Allocator,
+    _stream_owned: ?[]u8 = null,
+    _domain_owned: ?[]u8 = null,
 
     /// Blocks until the ack is received or timeout.
     pub fn wait(
@@ -62,6 +64,14 @@ pub const PubAckFuture = struct {
 
     /// Frees the future.
     pub fn deinit(self: *PubAckFuture) void {
+        if (self._stream_owned) |stream| {
+            self._allocator.free(stream);
+            self._stream_owned = null;
+        }
+        if (self._domain_owned) |domain| {
+            self._allocator.free(domain);
+            self._domain_owned = null;
+        }
         self._allocator.destroy(self);
     }
 };
@@ -259,39 +269,16 @@ pub const AsyncPublisher = struct {
         }
         _ = self.pending_count.fetchAdd(1, .release);
 
-        // Build headers if needed
-        var hdr_entries: [6]headers.Entry = undefined;
-        var hdr_count: usize = 0;
-        if (opts.msg_id) |v| {
-            hdr_entries[hdr_count] = .{
-                .key = headers.HeaderName.msg_id,
-                .value = v,
-            };
-            hdr_count += 1;
-        }
-        if (opts.expected_stream) |v| {
-            hdr_entries[hdr_count] = .{
-                .key = headers.HeaderName
-                    .expected_stream,
-                .value = v,
-            };
-            hdr_count += 1;
-        }
-        if (opts.ttl) |v| {
-            hdr_entries[hdr_count] = .{
-                .key = headers.HeaderName.msg_ttl,
-                .value = v,
-            };
-            hdr_count += 1;
-        }
+        var hdrs: publish_headers.PublishHeaderSet = undefined;
+        hdrs.populate(opts);
 
         // Publish with reply-to
-        if (hdr_count > 0) {
+        if (hdrs.count > 0) {
             try self.client
                 .publishRequestWithHeaders(
                 subject,
                 reply,
-                hdr_entries[0..hdr_count],
+                hdrs.slice(),
                 payload,
             );
         } else {
@@ -374,11 +361,32 @@ pub const AsyncPublisher = struct {
             }
         }
 
+        const stream_owned: ?[]u8 = if (parsed.value.stream) |stream|
+            self.allocator.dupe(u8, stream) catch {
+                fut._err = error.OutOfMemory;
+                fut._done.store(true, .release);
+                return;
+            }
+        else
+            null;
+
+        const domain_owned: ?[]u8 = if (parsed.value.domain) |domain|
+            self.allocator.dupe(u8, domain) catch {
+                if (stream_owned) |stream| self.allocator.free(stream);
+                fut._err = error.OutOfMemory;
+                fut._done.store(true, .release);
+                return;
+            }
+        else
+            null;
+
+        fut._stream_owned = stream_owned;
+        fut._domain_owned = domain_owned;
         fut._ack = .{
-            .stream = parsed.value.stream,
+            .stream = if (stream_owned) |stream| stream else null,
             .seq = parsed.value.seq,
             .duplicate = parsed.value.duplicate,
-            .domain = parsed.value.domain,
+            .domain = if (domain_owned) |domain| domain else null,
         };
         fut._done.store(true, .release);
     }
