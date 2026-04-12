@@ -2595,35 +2595,31 @@ pub fn requestMsg(
     const reply = try self.requestPrepReply(&waiter, &reply_buf);
     errdefer self.cleanupRespWaiter(&waiter, reply);
 
-    // Inline encode (raw header bytes path - no helper for this).
-    try self.write_mutex.lock(self.io);
-    {
-        defer self.write_mutex.unlock(self.io);
-        const writer = self.active_writer;
+    self.publish_mutex.lockUncancelable(self.io);
+    defer self.publish_mutex.unlock(self.io);
 
-        if (msg.headers) |hdrs| {
-            protocol.Encoder.encodeHPub(writer, .{
-                .subject = msg.subject,
-                .reply_to = reply,
-                .headers = hdrs,
-                .payload = msg.data,
-            }) catch return error.EncodingFailed;
-        } else {
-            protocol.Encoder.encodePub(writer, .{
-                .subject = msg.subject,
-                .reply_to = reply,
-                .payload = msg.data,
-            }) catch return error.EncodingFailed;
-        }
-
-        _ = self.statistics.msgs_out.fetchAdd(1, .monotonic);
-        _ = self.statistics.bytes_out.fetchAdd(
-            msg.data.len,
-            .monotonic,
+    if (msg.headers) |hdrs| {
+        try self.encodeHPubRawToRing(
+            msg.subject,
+            reply,
+            hdrs,
+            msg.data,
         );
-
-        self.flush_requested.store(true, .release);
+    } else {
+        try self.encodePubToRing(
+            msg.subject,
+            reply,
+            msg.data,
+        );
     }
+
+    _ = self.statistics.msgs_out.fetchAdd(1, .monotonic);
+    _ = self.statistics.bytes_out.fetchAdd(
+        msg.data.len,
+        .monotonic,
+    );
+
+    self.flush_requested.store(true, .release);
 
     return self.requestAwaitResp(&waiter, reply, timeout_ms);
 }
@@ -4559,9 +4555,6 @@ pub const Subscription = struct {
         if (self.state != .active) return;
         if (self.client_destroyed) return error.InvalidState;
 
-        self.state = .draining;
-
-        // Enqueue UNSUB to stop new messages without violating publish order.
         const client = self.client;
         if (State.atomicLoad(&client.state).canSend()) {
             client.publish_mutex.lockUncancelable(client.io);
@@ -4575,6 +4568,8 @@ pub const Subscription = struct {
             // Signal auto-flush to send UNSUB promptly
             client.flush_requested.store(true, .release);
         }
+
+        self.state = .draining;
     }
 
     /// Blocks until the subscription queue is empty (drained) or timeout.

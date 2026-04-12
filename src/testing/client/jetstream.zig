@@ -9435,7 +9435,7 @@ fn testPushAfterReconnect(
     };
     s1.deinit();
 
-    // Phase 1: push consumer + publish
+    // push consumer + publish
     const Counter = struct {
         count: u32 = 0,
         pub fn onMessage(
@@ -9552,7 +9552,7 @@ fn testPushAfterReconnect(
 
     threadSleepNs(2_000_000_000);
 
-    // Phase 2: recreate and push again
+    // recreate and push again
     if (js.createStream(.{
         .name = "PUSH_RECON",
         .subjects = &.{"pushrecon.>"},

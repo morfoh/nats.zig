@@ -1,5 +1,3 @@
-//! Phase 7: Advanced Features Tests
-//!
 //! Tests for checkCompatibility, publishMsg, requestMsg, and message status.
 
 const std = @import("std");
@@ -137,27 +135,44 @@ pub fn testRequestMsg(allocator: std.mem.Allocator) void {
     var url_buf: [64]u8 = undefined;
     const url = formatUrl(&url_buf, test_port);
 
-    const io = utils.newIo(allocator);
-    defer io.deinit();
-
-    const client = nats.Client.connect(allocator, io.io(), url, .{
+    const io_req = utils.newIo(allocator);
+    defer io_req.deinit();
+    const requester = nats.Client.connect(allocator, io_req.io(), url, .{
         .reconnect = false,
     }) catch {
-        reportResult("request_msg", false, "connect failed");
+        reportResult("request_msg", false, "requester connect failed");
         return;
     };
-    defer client.deinit();
+    defer requester.deinit();
+
+    const io_resp = utils.newIo(allocator);
+    defer io_resp.deinit();
+    const responder = nats.Client.connect(allocator, io_resp.io(), url, .{
+        .reconnect = false,
+    }) catch {
+        reportResult("request_msg", false, "responder connect failed");
+        return;
+    };
+    defer responder.deinit();
 
     // Set up a responder
-    var sub = client.subscribeSync("test.requestmsg") catch {
+    var sub = responder.subscribeSync("test.requestmsg") catch {
         reportResult("request_msg", false, "subscribe failed");
         return;
     };
     defer sub.deinit();
 
+    responder.flush(1_000_000_000) catch {
+        reportResult("request_msg", false, "flush failed");
+        return;
+    };
+
     // Spawn responder task
-    var responder = io.io().async(responderTask, .{ &sub, client });
-    defer responder.cancel(io.io());
+    var responder_future = io_resp.io().async(
+        responderTask,
+        .{ &sub, responder },
+    );
+    defer responder_future.cancel(io_resp.io());
 
     // Create message to send as request
     const request_msg = nats.Client.Message{
@@ -169,7 +184,7 @@ pub fn testRequestMsg(allocator: std.mem.Allocator) void {
         .owned = false,
     };
 
-    const reply = client.requestMsg(&request_msg, 1000) catch {
+    const reply = requester.requestMsg(&request_msg, 1000) catch {
         reportResult("request_msg", false, "requestMsg failed");
         return;
     };
@@ -190,11 +205,117 @@ fn responderTask(
     sub: **nats.Subscription,
     client: *nats.Client,
 ) void {
-    if (sub.*.nextMsgTimeout(500) catch null) |msg| {
+    if (sub.*.nextMsgTimeout(2000) catch null) |msg| {
         defer msg.deinit();
         if (msg.reply_to) |reply_to| {
             client.publish(reply_to, "response-data") catch {};
         }
+    }
+}
+
+fn requestMsgOrderingResponder(
+    sub: **nats.Subscription,
+    client: *nats.Client,
+) void {
+    var saw_state = false;
+    var handled: usize = 0;
+    while (handled < 2) {
+        const maybe_msg = sub.*.nextMsgTimeout(1000) catch return;
+        const msg = maybe_msg orelse return;
+        defer msg.deinit();
+        handled += 1;
+
+        if (std.mem.eql(u8, msg.subject, "test.requestmsg.ordering.state")) {
+            saw_state = true;
+            continue;
+        }
+
+        if (std.mem.eql(u8, msg.subject, "test.requestmsg.ordering.service")) {
+            const reply_to = msg.reply_to orelse return;
+            client.publish(
+                reply_to,
+                if (saw_state) "fresh" else "stale",
+            ) catch {};
+            return;
+        }
+    }
+}
+
+pub fn testRequestMsgOrdering(allocator: std.mem.Allocator) void {
+    var url_buf: [64]u8 = undefined;
+    const url = formatUrl(&url_buf, test_port);
+
+    const io_req = utils.newIo(allocator);
+    defer io_req.deinit();
+    const requester = nats.Client.connect(
+        allocator,
+        io_req.io(),
+        url,
+        .{ .reconnect = false },
+    ) catch {
+        reportResult("request_msg_ordering", false, "requester connect failed");
+        return;
+    };
+    defer requester.deinit();
+
+    const io_resp = utils.newIo(allocator);
+    defer io_resp.deinit();
+    const responder = nats.Client.connect(
+        allocator,
+        io_resp.io(),
+        url,
+        .{ .reconnect = false },
+    ) catch {
+        reportResult("request_msg_ordering", false, "responder connect failed");
+        return;
+    };
+    defer responder.deinit();
+
+    var sub = responder.subscribeSync("test.requestmsg.ordering.>") catch {
+        reportResult("request_msg_ordering", false, "subscribe failed");
+        return;
+    };
+    defer sub.deinit();
+
+    responder.flush(1_000_000_000) catch {
+        reportResult("request_msg_ordering", false, "flush failed");
+        return;
+    };
+
+    var handler = io_resp.io().async(
+        requestMsgOrderingResponder,
+        .{ &sub, responder },
+    );
+    defer handler.cancel(io_resp.io());
+
+    requester.publish("test.requestmsg.ordering.state", "state-update") catch {
+        reportResult("request_msg_ordering", false, "publish failed");
+        return;
+    };
+
+    const request_msg = nats.Client.Message{
+        .subject = "test.requestmsg.ordering.service",
+        .sid = 0,
+        .reply_to = null,
+        .data = "request-data",
+        .headers = null,
+        .owned = false,
+    };
+
+    const reply = requester.requestMsg(&request_msg, 1000) catch {
+        reportResult("request_msg_ordering", false, "requestMsg failed");
+        return;
+    };
+
+    if (reply) |msg| {
+        defer msg.deinit();
+        if (std.mem.eql(u8, msg.data, "fresh")) {
+            reportResult("request_msg_ordering", true, "");
+        } else {
+            reportResult("request_msg_ordering", false, "request overtook publish");
+        }
+    } else {
+        reportResult("request_msg_ordering", false, "timeout");
     }
 }
 
@@ -203,4 +324,5 @@ pub fn runAll(allocator: std.mem.Allocator) void {
     testPublishMsg(allocator);
     testNoRespondersStatus(allocator);
     testRequestMsg(allocator);
+    testRequestMsgOrdering(allocator);
 }

@@ -245,7 +245,7 @@ pub fn testSubsThenResubscribe(
     defer allocator.free(subs);
     @memset(subs, null);
 
-    // Phase 1: subscribe COUNT
+    // subscribe COUNT
     var created: usize = 0;
     for (0..COUNT) |i| {
         var sbuf: [32]u8 = undefined;
@@ -284,7 +284,7 @@ pub fn testSubsThenResubscribe(
         return;
     }
 
-    // Phase 2: resubscribe fresh
+    // resubscribe fresh
     var created2: usize = 0;
     var last_err: ?[]const u8 = null;
     for (0..COUNT) |i| {

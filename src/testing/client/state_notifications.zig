@@ -1,6 +1,6 @@
 //! State Notification Tests for NATS Client
 //!
-//! Tests for Phase 3 features: LastError, discovered_servers event,
+//! Tests for: LastError, discovered_servers event,
 //! draining event, subscription_complete event.
 
 const std = @import("std");
