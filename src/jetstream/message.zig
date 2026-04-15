@@ -7,13 +7,31 @@ const std = @import("std");
 const nats = @import("../nats.zig");
 const Client = nats.Client;
 
-/// Owned JetStream message with ack protocol support.
-/// Used by pull/fetch APIs that transfer message ownership
-/// to the caller. Call deinit() when finished.
+/// JetStream message wrapper with ack protocol support.
+///
+/// Ownership model (mirrors Client.Message.owned):
+/// - Pull/fetch path: `owned = true`. The caller receives a
+///   JsMsg by value and MUST call `deinit()` when finished to
+///   free the underlying backing buffer.
+/// - Push callback path: `owned = false`. The subscription
+///   passes a stack-local JsMsg to the handler; `deinit()`
+///   is a no-op. Slice fields (subject, data, headers,
+///   reply_to via the inner Client.Message) are valid ONLY
+///   during the callback invocation. Do NOT copy the struct
+///   out of the callback scope or save pointers past return
+///   -- the backing buffer is reclaimed by the subscription
+///   right after the handler returns.
+///
+/// This matches the existing contract for `*const
+/// Client.Message` in core NATS callbacks.
 pub const JsMsg = struct {
     msg: Client.Message,
     client: *Client,
     acked: bool = false,
+    /// See the type-level doc comment for the lifetime
+    /// contract. Default is `true` (owned) so pull-path
+    /// constructions do not need to specify it.
+    owned: bool = true,
 
     /// Acknowledges the message (+ACK).
     pub fn ack(self: *JsMsg) !void {
@@ -154,147 +172,11 @@ pub const JsMsg = struct {
         return parseMsgMetadata(reply);
     }
 
-    /// Frees the underlying message.
+    /// Frees the underlying message. No-op when `owned` is
+    /// false (push-callback path -- subscription handles it).
     pub fn deinit(self: *JsMsg) void {
+        if (!self.owned) return;
         self.msg.deinit();
-    }
-};
-
-/// Borrowed JetStream message for push-consumer callbacks.
-/// Valid only for the duration of the callback invocation.
-/// Supports ack/nak/wpi/term but does NOT own the underlying
-/// message and therefore has no deinit(). This is intentionally
-/// distinct from JsMsg because push callbacks do not receive
-/// ownership of the delivered Client.Message.
-pub const BorrowedJsMsg = struct {
-    msg: *const Client.Message,
-    client: *Client,
-    acked: bool = false,
-
-    /// Acknowledges the message (+ACK).
-    pub fn ack(self: *BorrowedJsMsg) !void {
-        std.debug.assert(!self.acked);
-        const reply = self.msg.reply_to orelse
-            return;
-        std.debug.assert(reply.len > 0);
-        try self.client.publish(reply, "+ACK");
-        self.acked = true;
-    }
-
-    /// Acknowledges and waits for server confirmation.
-    pub fn doubleAck(
-        self: *BorrowedJsMsg,
-        timeout_ms: u32,
-    ) !void {
-        std.debug.assert(!self.acked);
-        std.debug.assert(timeout_ms > 0);
-        const reply = self.msg.reply_to orelse
-            return;
-        std.debug.assert(reply.len > 0);
-        const resp = self.client.request(
-            reply,
-            "+ACK",
-            timeout_ms,
-        ) catch |err| return err;
-        if (resp) |r| {
-            var m = r;
-            m.deinit();
-        }
-        self.acked = true;
-    }
-
-    /// Negatively acknowledges -- triggers redelivery (-NAK).
-    pub fn nak(self: *BorrowedJsMsg) !void {
-        std.debug.assert(!self.acked);
-        const reply = self.msg.reply_to orelse
-            return;
-        std.debug.assert(reply.len > 0);
-        try self.client.publish(reply, "-NAK");
-        self.acked = true;
-    }
-
-    /// Negatively acknowledges with a redelivery delay.
-    pub fn nakWithDelay(
-        self: *BorrowedJsMsg,
-        delay_ns: i64,
-    ) !void {
-        std.debug.assert(!self.acked);
-        std.debug.assert(delay_ns > 0);
-        const reply = self.msg.reply_to orelse
-            return;
-        std.debug.assert(reply.len > 0);
-        var buf: [64]u8 = undefined;
-        const payload = std.fmt.bufPrint(
-            &buf,
-            "-NAK {{\"delay\":{d}}}",
-            .{delay_ns},
-        ) catch unreachable;
-        try self.client.publish(reply, payload);
-        self.acked = true;
-    }
-
-    /// Signals work in progress (+WPI).
-    pub fn inProgress(self: *BorrowedJsMsg) !void {
-        const reply = self.msg.reply_to orelse
-            return;
-        std.debug.assert(reply.len > 0);
-        try self.client.publish(reply, "+WPI");
-    }
-
-    /// Terminates message processing (+TERM).
-    pub fn term(self: *BorrowedJsMsg) !void {
-        std.debug.assert(!self.acked);
-        const reply = self.msg.reply_to orelse
-            return;
-        std.debug.assert(reply.len > 0);
-        try self.client.publish(reply, "+TERM");
-        self.acked = true;
-    }
-
-    /// Terminates with a reason string.
-    pub fn termWithReason(
-        self: *BorrowedJsMsg,
-        reason: []const u8,
-    ) !void {
-        std.debug.assert(!self.acked);
-        std.debug.assert(reason.len > 0);
-        std.debug.assert(reason.len <= 506);
-        const reply = self.msg.reply_to orelse
-            return;
-        std.debug.assert(reply.len > 0);
-        var buf: [512]u8 = undefined;
-        const payload = std.fmt.bufPrint(
-            &buf,
-            "+TERM {s}",
-            .{reason},
-        ) catch unreachable;
-        try self.client.publish(reply, payload);
-        self.acked = true;
-    }
-
-    pub fn data(self: *const BorrowedJsMsg) []const u8 {
-        return self.msg.data;
-    }
-
-    pub fn subject(self: *const BorrowedJsMsg) []const u8 {
-        return self.msg.subject;
-    }
-
-    pub fn headers(self: *const BorrowedJsMsg) ?[]const u8 {
-        return self.msg.headers;
-    }
-
-    pub fn replyTo(self: *const BorrowedJsMsg) ?[]const u8 {
-        return self.msg.reply_to;
-    }
-
-    pub fn metadata(
-        self: *const BorrowedJsMsg,
-    ) ?MsgMetadata {
-        const reply = self.msg.reply_to orelse
-            return null;
-        std.debug.assert(reply.len > 0);
-        return parseMsgMetadata(reply);
     }
 };
 

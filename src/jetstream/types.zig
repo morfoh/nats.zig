@@ -7,6 +7,7 @@
 
 const std = @import("std");
 const errors = @import("errors.zig");
+const headers = @import("../protocol/headers.zig");
 
 pub const ApiErrorJson = errors.ApiErrorJson;
 
@@ -162,6 +163,21 @@ pub const PublishOpts = struct {
     expected_last_msg_id: ?[]const u8 = null,
     expected_last_subj_seq: ?u64 = null,
     ttl: ?[]const u8 = null,
+};
+
+/// Pre-built JetStream publish message with user headers.
+///
+/// Passed to `JetStream.publishMsg()` for publishing messages
+/// with arbitrary user-supplied headers alongside JetStream-
+/// specific headers from `opts`. On header-key collision
+/// (case-insensitive per NATS convention), JetStream headers
+/// from `opts` override the user-supplied value -- matching
+/// Go client `PublishMsg` semantics.
+pub const JsPublishMsg = struct {
+    subject: []const u8,
+    payload: []const u8,
+    headers: ?[]const headers.Entry = null,
+    opts: PublishOpts = .{},
 };
 
 // -- Pull types --

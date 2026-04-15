@@ -20,14 +20,17 @@ const js_mod = nats.jetstream;
 
 // Counter tracks how many messages the handler has
 // processed. Must implement onMessage for the
-// PushMsgHandler vtable interface.
+// JsMsgHandler vtable interface. The JsMsg has
+// owned=false -- its slice fields are valid only
+// during this callback; do not save pointers past
+// the function return.
 const Counter = struct {
     received: u32 = 0,
     target: u32 = 0,
 
     pub fn onMessage(
         self: *Counter,
-        msg: *js_mod.BorrowedJsMsg,
+        msg: *js_mod.JsMsg,
     ) void {
         self.received += 1;
         std.debug.print(
@@ -91,7 +94,7 @@ pub fn main(init: std.process.Init) !void {
     // and dispatches messages to our Counter handler
     // on the IO thread.
     var ctx = try push_sub.consume(
-        js_mod.PushMsgHandler.init(
+        js_mod.JsMsgHandler.init(
             Counter,
             &counter,
         ),

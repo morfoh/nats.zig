@@ -14,50 +14,9 @@ const Client = nats.Client;
 const types = @import("types.zig");
 const errors = @import("errors.zig");
 const consumer_mod = @import("consumer.zig");
-const BorrowedJsMsg = @import("message.zig").BorrowedJsMsg;
+const JsMsg = @import("message.zig").JsMsg;
+const JsMsgHandler = consumer_mod.JsMsgHandler;
 const JetStream = @import("JetStream.zig");
-
-pub const PushMsgHandler = struct {
-    ptr: *anyopaque,
-    vtable: *const VTable,
-
-    pub const VTable = struct {
-        onMessage: *const fn (
-            *anyopaque,
-            *BorrowedJsMsg,
-        ) void,
-    };
-
-    pub fn init(
-        comptime T: type,
-        ptr: *T,
-    ) PushMsgHandler {
-        const gen = struct {
-            fn onMessage(
-                p: *anyopaque,
-                msg: *BorrowedJsMsg,
-            ) void {
-                const self: *T = @ptrCast(
-                    @alignCast(p),
-                );
-                self.onMessage(msg);
-            }
-        };
-        return .{
-            .ptr = ptr,
-            .vtable = &.{
-                .onMessage = gen.onMessage,
-            },
-        };
-    }
-
-    pub fn dispatch(
-        self: PushMsgHandler,
-        msg: *BorrowedJsMsg,
-    ) void {
-        self.vtable.onMessage(self.ptr, msg);
-    }
-};
 
 /// Push-based consumer subscription. Created after a
 /// push consumer exists on the server. Subscribe to
@@ -154,9 +113,14 @@ pub const PushSubscription = struct {
     /// deliver subject. Uses the client's native
     /// callback subscription (runs on IO thread).
     /// To stop: call the returned context's deinit().
+    ///
+    /// The handler receives `*JsMsg` with `owned = false`.
+    /// Slice fields (data, subject, headers, reply_to)
+    /// are valid ONLY during the callback; do not copy
+    /// the struct out or save pointers past return.
     pub fn consume(
         self: *PushSubscription,
-        handler: PushMsgHandler,
+        handler: JsMsgHandler,
         opts: ConsumeOpts,
     ) !PushConsumeContext {
         std.debug.assert(self.deliver_len > 0);
@@ -219,11 +183,11 @@ pub const PushSubscription = struct {
 };
 
 /// Heap-allocated wrapper that bridges Client.MsgHandler
-/// (receives *const Message) to PushMsgHandler (receives
-/// *BorrowedJsMsg). Lives on the heap because the callback
-/// subscription outlives the consume() call.
+/// (receives *const Message) to JsMsgHandler (receives
+/// *JsMsg with owned=false). Lives on the heap because the
+/// callback subscription outlives the consume() call.
 const PushCallbackWrapper = struct {
-    handler: PushMsgHandler,
+    handler: JsMsgHandler,
     client: *Client,
     allocator: Allocator,
     err_handler: ?consumer_mod.ErrHandler = null,
@@ -250,12 +214,14 @@ const PushCallbackWrapper = struct {
             }
         }
 
-        // Borrow-only callback message. The underlying
-        // Client.Message is freed by callbackDrainFn
-        // after handler.dispatch() returns.
-        var js_msg = BorrowedJsMsg{
-            .msg = msg,
+        // Borrowed message. The underlying Client.Message
+        // backing buffer is reclaimed by callbackDrainFn
+        // after handler.dispatch() returns. owned=false
+        // makes JsMsg.deinit() a no-op.
+        var js_msg = JsMsg{
+            .msg = msg.*,
             .client = self.client,
+            .owned = false,
         };
         self.handler.dispatch(&js_msg);
     }

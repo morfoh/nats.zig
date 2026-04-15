@@ -44,7 +44,6 @@ api_prefix_buf: [128]u8 = undefined,
 api_prefix_len: u8 = 0,
 timeout_ms: u32 = 5000,
 last_api_err: ?ApiError = null,
-_reserved_async_ctx: ?*anyopaque = null,
 
 /// JetStream context options for API prefix, timeout, and
 /// multi-tenant domain configuration.
@@ -1143,10 +1142,90 @@ pub fn publishWithOpts(
     var hdrs: publish_headers.PublishHeaderSet = undefined;
     hdrs.populate(opts);
 
+    // Pass null when opts produced no headers -- the protocol
+    // layer asserts entries.len > 0, and publishRetry uses the
+    // null/non-null distinction to select the correct publish
+    // path.
+    const slice = hdrs.slice();
+    const hdr_slice: ?[]const headers.Entry =
+        if (slice.len == 0) null else slice;
     return self.publishRetry(
         subject,
         payload,
-        hdrs.slice(),
+        hdr_slice,
+    );
+}
+
+/// Publishes a pre-built JetStream message with user-supplied
+/// headers and optional PublishOpts. User headers are merged
+/// with JetStream-generated headers (msg_id, expected_stream,
+/// etc.); on key collision, JetStream headers from `msg.opts`
+/// override the user-supplied value (matches Go client
+/// PublishMsg semantics).
+///
+/// Header key comparison is case-insensitive per NATS header
+/// conventions.
+///
+/// The allocator is used only for a temporary merge buffer
+/// that is freed before return. No allocations escape.
+pub fn publishMsg(
+    self: *JetStream,
+    allocator: Allocator,
+    msg: types.JsPublishMsg,
+) !Response(PubAck) {
+    std.debug.assert(msg.subject.len > 0);
+    std.debug.assert(msg.payload.len <= 1048576);
+
+    var js_hdrs: publish_headers.PublishHeaderSet = undefined;
+    js_hdrs.populate(msg.opts);
+
+    // Fast path: no user headers. Pass null to publishRetry
+    // when opts also produced no JS headers -- the protocol
+    // layer asserts entries.len > 0 in encodedSize() and the
+    // null/non-null distinction is how publishRetry chooses
+    // between the header and no-header publish paths.
+    if (msg.headers == null or msg.headers.?.len == 0) {
+        const js_slice = js_hdrs.slice();
+        const hdr_slice: ?[]const headers.Entry =
+            if (js_slice.len == 0) null else js_slice;
+        return self.publishRetry(
+            msg.subject,
+            msg.payload,
+            hdr_slice,
+        );
+    }
+
+    // Merge: user headers first, JS headers override on
+    // case-insensitive key collision.
+    var merged: std.ArrayList(headers.Entry) = .empty;
+    defer merged.deinit(allocator);
+
+    try merged.appendSlice(allocator, msg.headers.?);
+
+    for (js_hdrs.slice()) |js_entry| {
+        var replaced = false;
+        for (merged.items) |*existing| {
+            if (std.ascii.eqlIgnoreCase(
+                existing.key,
+                js_entry.key,
+            )) {
+                existing.value = js_entry.value;
+                replaced = true;
+                break;
+            }
+        }
+        if (!replaced) try merged.append(
+            allocator,
+            js_entry,
+        );
+    }
+
+    const hdr_slice: ?[]const headers.Entry =
+        if (merged.items.len == 0) null else merged.items;
+    return self.publishRetry(
+        msg.subject,
+        msg.payload,
+        hdr_slice,
     );
 }
 

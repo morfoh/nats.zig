@@ -5023,7 +5023,7 @@ pub fn testPushConsumerBasic(
         count: u32 = 0,
         pub fn onMessage(
             self: *@This(),
-            msg: *nats.jetstream.BorrowedJsMsg,
+            msg: *nats.jetstream.JsMsg,
         ) void {
             _ = msg;
             self.count += 1;
@@ -5044,7 +5044,7 @@ pub fn testPushConsumerBasic(
     push_sub.setDeliverSubject(deliver_subj);
 
     var ctx = push_sub.consume(
-        nats.jetstream.PushMsgHandler.init(
+        nats.jetstream.JsMsgHandler.init(
             Counter,
             &counter,
         ),
@@ -5162,7 +5162,7 @@ pub fn testPushConsumerBorrowedAck(
 
         pub fn onMessage(
             self: *@This(),
-            msg: *nats.jetstream.BorrowedJsMsg,
+            msg: *nats.jetstream.JsMsg,
         ) void {
             if (std.mem.eql(
                 u8,
@@ -5189,7 +5189,7 @@ pub fn testPushConsumerBorrowedAck(
     push_sub.setDeliverSubject(deliver_subj);
 
     var ctx = push_sub.consume(
-        nats.jetstream.PushMsgHandler.init(
+        nats.jetstream.JsMsgHandler.init(
             Handler,
             &handler,
         ),
@@ -5325,7 +5325,7 @@ pub fn testPushConsumerHeartbeatErrHandler(
     const Handler = struct {
         pub fn onMessage(
             self: *@This(),
-            msg: *nats.jetstream.BorrowedJsMsg,
+            msg: *nats.jetstream.JsMsg,
         ) void {
             _ = self;
             _ = msg;
@@ -5344,7 +5344,7 @@ pub fn testPushConsumerHeartbeatErrHandler(
     push_sub.setDeliverSubject(deliver_subj);
 
     var ctx = push_sub.consume(
-        nats.jetstream.PushMsgHandler.init(
+        nats.jetstream.JsMsgHandler.init(
             Handler,
             &handler,
         ),
@@ -5496,6 +5496,418 @@ pub fn testPublishWithTTL(
     };
     d.deinit();
     reportResult("js_publish_ttl", true, "");
+}
+
+/// Verifies publishMsg() merges user headers with JS-derived
+/// opts headers. On key collision (case-insensitive), JS opts
+/// must win. Retrieves the stored message via getMsg() and
+/// asserts both headers against the wire.
+pub fn testPublishMsg(
+    allocator: std.mem.Allocator,
+) void {
+    var url_buf: [64]u8 = undefined;
+    const url = formatUrl(&url_buf, js_port);
+
+    const io = utils.newIo(allocator);
+    defer io.deinit();
+
+    const client = nats.Client.connect(
+        allocator,
+        io.io(),
+        url,
+        .{ .reconnect = false },
+    ) catch {
+        reportResult(
+            "js_publish_msg",
+            false,
+            "connect failed",
+        );
+        return;
+    };
+    defer client.deinit();
+
+    var js = nats.jetstream.JetStream.init(
+        client,
+        .{},
+    );
+
+    var stream = js.createStream(.{
+        .name = "TEST_PUBLISH_MSG",
+        .subjects = &.{"pubmsg.test"},
+        .storage = .memory,
+    }) catch {
+        reportResult(
+            "js_publish_msg",
+            false,
+            "create stream",
+        );
+        return;
+    };
+    defer stream.deinit();
+
+    // User headers. Note lowercase "nats-msg-id" deliberately
+    // collides (case-insensitively) with the JS header set by
+    // opts.msg_id -- "jsopts-id" must win.
+    const user_headers = [_]nats.protocol.headers.Entry{
+        .{ .key = "X-Custom", .value = "uservalue" },
+        .{ .key = "nats-msg-id", .value = "user-id" },
+    };
+
+    var ack = js.publishMsg(allocator, .{
+        .subject = "pubmsg.test",
+        .payload = "hello",
+        .headers = &user_headers,
+        .opts = .{ .msg_id = "jsopts-id" },
+    }) catch {
+        reportResult(
+            "js_publish_msg",
+            false,
+            "publishMsg failed",
+        );
+        var d = js.deleteStream("TEST_PUBLISH_MSG") catch return;
+        d.deinit();
+        return;
+    };
+    ack.deinit();
+
+    var resp = js.getMsg(
+        "TEST_PUBLISH_MSG",
+        1,
+    ) catch {
+        reportResult(
+            "js_publish_msg",
+            false,
+            "getMsg failed",
+        );
+        var d = js.deleteStream("TEST_PUBLISH_MSG") catch return;
+        d.deinit();
+        return;
+    };
+    defer resp.deinit();
+
+    const stored = resp.value.message orelse {
+        reportResult(
+            "js_publish_msg",
+            false,
+            "no stored message",
+        );
+        var d = js.deleteStream("TEST_PUBLISH_MSG") catch return;
+        d.deinit();
+        return;
+    };
+
+    const hdr_b64 = stored.hdrs orelse {
+        reportResult(
+            "js_publish_msg",
+            false,
+            "no headers in stored msg",
+        );
+        var d = js.deleteStream("TEST_PUBLISH_MSG") catch return;
+        d.deinit();
+        return;
+    };
+
+    // Decode base64 headers, then parse NATS/1.0.
+    const decoder = std.base64.standard.Decoder;
+    const decoded_len = decoder.calcSizeForSlice(hdr_b64) catch {
+        reportResult(
+            "js_publish_msg",
+            false,
+            "b64 calc size",
+        );
+        var d = js.deleteStream("TEST_PUBLISH_MSG") catch return;
+        d.deinit();
+        return;
+    };
+    const decoded_buf = allocator.alloc(u8, decoded_len) catch {
+        reportResult(
+            "js_publish_msg",
+            false,
+            "alloc decoded",
+        );
+        var d = js.deleteStream("TEST_PUBLISH_MSG") catch return;
+        d.deinit();
+        return;
+    };
+    defer allocator.free(decoded_buf);
+    decoder.decode(decoded_buf, hdr_b64) catch {
+        reportResult(
+            "js_publish_msg",
+            false,
+            "b64 decode",
+        );
+        var d = js.deleteStream("TEST_PUBLISH_MSG") catch return;
+        d.deinit();
+        return;
+    };
+
+    var parsed = nats.protocol.headers.parse(
+        allocator,
+        decoded_buf,
+    );
+    defer parsed.deinit();
+
+    if (parsed.err != null) {
+        reportResult(
+            "js_publish_msg",
+            false,
+            "header parse err",
+        );
+        var d = js.deleteStream("TEST_PUBLISH_MSG") catch return;
+        d.deinit();
+        return;
+    }
+
+    // User-supplied custom header must pass through.
+    const custom = parsed.get("X-Custom") orelse {
+        reportResult(
+            "js_publish_msg",
+            false,
+            "X-Custom missing",
+        );
+        var d = js.deleteStream("TEST_PUBLISH_MSG") catch return;
+        d.deinit();
+        return;
+    };
+    if (!std.mem.eql(u8, custom, "uservalue")) {
+        reportResult(
+            "js_publish_msg",
+            false,
+            "X-Custom wrong value",
+        );
+        var d = js.deleteStream("TEST_PUBLISH_MSG") catch return;
+        d.deinit();
+        return;
+    }
+
+    // Collision: opts.msg_id ("jsopts-id") must override the
+    // user's lowercase "nats-msg-id" entry. Check via the
+    // case-insensitive lookup.
+    const msg_id = parsed.get("Nats-Msg-Id") orelse {
+        reportResult(
+            "js_publish_msg",
+            false,
+            "Nats-Msg-Id missing",
+        );
+        var d = js.deleteStream("TEST_PUBLISH_MSG") catch return;
+        d.deinit();
+        return;
+    };
+    if (!std.mem.eql(u8, msg_id, "jsopts-id")) {
+        reportResult(
+            "js_publish_msg",
+            false,
+            "opts.msg_id did not override",
+        );
+        var d = js.deleteStream("TEST_PUBLISH_MSG") catch return;
+        d.deinit();
+        return;
+    }
+
+    var d = js.deleteStream(
+        "TEST_PUBLISH_MSG",
+    ) catch {
+        reportResult("js_publish_msg", true, "");
+        return;
+    };
+    d.deinit();
+    reportResult("js_publish_msg", true, "");
+}
+
+/// Regression: publishMsg with no user headers and default opts
+/// must succeed (takes the no-header publish path). Previously
+/// this tripped an assertion in protocol.headers.encodedSize()
+/// because PublishHeaderSet.slice() returned an empty (but
+/// non-null) slice.
+pub fn testPublishMsgNoHeaders(
+    allocator: std.mem.Allocator,
+) void {
+    var url_buf: [64]u8 = undefined;
+    const url = formatUrl(&url_buf, js_port);
+
+    const io = utils.newIo(allocator);
+    defer io.deinit();
+
+    const client = nats.Client.connect(
+        allocator,
+        io.io(),
+        url,
+        .{ .reconnect = false },
+    ) catch {
+        reportResult(
+            "js_publish_msg_no_headers",
+            false,
+            "connect failed",
+        );
+        return;
+    };
+    defer client.deinit();
+
+    var js = nats.jetstream.JetStream.init(
+        client,
+        .{},
+    );
+
+    var stream = js.createStream(.{
+        .name = "TEST_PUBLISH_MSG_BARE",
+        .subjects = &.{"pubmsg.bare"},
+        .storage = .memory,
+    }) catch {
+        reportResult(
+            "js_publish_msg_no_headers",
+            false,
+            "create stream",
+        );
+        return;
+    };
+    defer stream.deinit();
+
+    var ack = js.publishMsg(allocator, .{
+        .subject = "pubmsg.bare",
+        .payload = "hi",
+    }) catch {
+        reportResult(
+            "js_publish_msg_no_headers",
+            false,
+            "publishMsg failed",
+        );
+        var d = js.deleteStream("TEST_PUBLISH_MSG_BARE") catch return;
+        d.deinit();
+        return;
+    };
+    ack.deinit();
+
+    var resp = js.getMsg(
+        "TEST_PUBLISH_MSG_BARE",
+        1,
+    ) catch {
+        reportResult(
+            "js_publish_msg_no_headers",
+            false,
+            "getMsg failed",
+        );
+        var d = js.deleteStream("TEST_PUBLISH_MSG_BARE") catch return;
+        d.deinit();
+        return;
+    };
+    defer resp.deinit();
+
+    if (resp.value.message == null) {
+        reportResult(
+            "js_publish_msg_no_headers",
+            false,
+            "no stored message",
+        );
+        var d = js.deleteStream("TEST_PUBLISH_MSG_BARE") catch return;
+        d.deinit();
+        return;
+    }
+
+    var d = js.deleteStream(
+        "TEST_PUBLISH_MSG_BARE",
+    ) catch {
+        reportResult("js_publish_msg_no_headers", true, "");
+        return;
+    };
+    d.deinit();
+    reportResult("js_publish_msg_no_headers", true, "");
+}
+
+/// Regression: publishWithOpts with empty opts must succeed
+/// (same underlying bug as publishMsg with no headers).
+pub fn testPublishWithOptsEmpty(
+    allocator: std.mem.Allocator,
+) void {
+    var url_buf: [64]u8 = undefined;
+    const url = formatUrl(&url_buf, js_port);
+
+    const io = utils.newIo(allocator);
+    defer io.deinit();
+
+    const client = nats.Client.connect(
+        allocator,
+        io.io(),
+        url,
+        .{ .reconnect = false },
+    ) catch {
+        reportResult(
+            "js_publish_with_opts_empty",
+            false,
+            "connect failed",
+        );
+        return;
+    };
+    defer client.deinit();
+
+    var js = nats.jetstream.JetStream.init(
+        client,
+        .{},
+    );
+
+    var stream = js.createStream(.{
+        .name = "TEST_PUBLISH_OPTS_EMPTY",
+        .subjects = &.{"pubopts.empty"},
+        .storage = .memory,
+    }) catch {
+        reportResult(
+            "js_publish_with_opts_empty",
+            false,
+            "create stream",
+        );
+        return;
+    };
+    defer stream.deinit();
+
+    var ack = js.publishWithOpts(
+        "pubopts.empty",
+        "payload",
+        .{},
+    ) catch {
+        reportResult(
+            "js_publish_with_opts_empty",
+            false,
+            "publishWithOpts failed",
+        );
+        var d = js.deleteStream("TEST_PUBLISH_OPTS_EMPTY") catch return;
+        d.deinit();
+        return;
+    };
+    ack.deinit();
+
+    var resp = js.getMsg(
+        "TEST_PUBLISH_OPTS_EMPTY",
+        1,
+    ) catch {
+        reportResult(
+            "js_publish_with_opts_empty",
+            false,
+            "getMsg failed",
+        );
+        var d = js.deleteStream("TEST_PUBLISH_OPTS_EMPTY") catch return;
+        d.deinit();
+        return;
+    };
+    defer resp.deinit();
+
+    if (resp.value.message == null) {
+        reportResult(
+            "js_publish_with_opts_empty",
+            false,
+            "no stored message",
+        );
+        var d = js.deleteStream("TEST_PUBLISH_OPTS_EMPTY") catch return;
+        d.deinit();
+        return;
+    }
+
+    var d = js.deleteStream(
+        "TEST_PUBLISH_OPTS_EMPTY",
+    ) catch {
+        reportResult("js_publish_with_opts_empty", true, "");
+        return;
+    };
+    d.deinit();
+    reportResult("js_publish_with_opts_empty", true, "");
 }
 
 pub fn testKvUpdateBucket(
@@ -9878,7 +10290,7 @@ fn testPushAfterReconnect(
         count: u32 = 0,
         pub fn onMessage(
             self: *@This(),
-            msg: *nats.jetstream.BorrowedJsMsg,
+            msg: *nats.jetstream.JsMsg,
         ) void {
             _ = msg;
             self.count += 1;
@@ -9896,7 +10308,7 @@ fn testPushAfterReconnect(
     push1.setDeliverSubject(deliver1);
 
     var ctx1 = push1.consume(
-        nats.jetstream.PushMsgHandler.init(
+        nats.jetstream.JsMsgHandler.init(
             Counter,
             &counter1,
         ),
@@ -10011,7 +10423,7 @@ fn testPushAfterReconnect(
     push2.setDeliverSubject(deliver2);
 
     var ctx2 = push2.consume(
-        nats.jetstream.PushMsgHandler.init(
+        nats.jetstream.JsMsgHandler.init(
             Counter,
             &counter2,
         ),
@@ -10176,6 +10588,9 @@ pub fn runAll(
     testPushConsumerBorrowedAck(allocator);
     testPushConsumerHeartbeatErrHandler(allocator);
     testPublishWithTTL(allocator);
+    testPublishMsg(allocator);
+    testPublishMsgNoHeaders(allocator);
+    testPublishWithOptsEmpty(allocator);
     testKvUpdateBucket(allocator);
     testKvCreateOrUpdateBucket(allocator);
     testKvPurgeDeletes(allocator);
